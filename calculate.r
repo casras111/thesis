@@ -60,18 +60,21 @@ diff_beta_price <- StockInitialPrice-estimatedprice_beta
 
 paste(ibm$Date[120],StockInitialPrice)
 paste(ibm$Date[1],StockFinalPrice)
-estimatedprice_beta
+paste("estimated CAPM price",estimatedprice_beta)
 
-diff_beta_price/StockInitialPrice
-
-Pricei <- 10 #initial stock price, low to get high percentage in portfolio
-Xi <- 0.99 #initial percentage of stock in portfolio
-Xm <- 1-Xi
+(diff_beta_price/StockInitialPrice)
 
 Rm <- (MarketFinalPrice/MarketInitialPrice-1)/10
 
-pct_iterationscale <- 0:1000/1000
-price_iterationscale <- 10:1000
+NWeight <- 10
+NPrices <- 200
+
+pct_iterationscale <- 0:NWeight/NWeight
+price_iterationscale <- 1:NPrices #need to fix for % of original price
+
+Sharpe_mat <- matrix(nrow=NPrices,ncol=NWeight+1)
+rownames(Sharpe_mat)<-price_iterationscale
+colnames(Sharpe_mat)<-pct_iterationscale
 
 MinXi <- 1
 for (Pricei in price_iterationscale) {
@@ -79,8 +82,10 @@ for (Pricei in price_iterationscale) {
   for (Xm in pct_iterationscale) {
     Xi=1-Xm
     Ri <- (StockFinalPrice/Pricei-1)/10
-    VarPortfolio <- Xi*ibm_AnnVol^2+Xm*sp500_AnnVol^2+Xi*Xm*Cov_ibmvssp500
-    SharpePortfolio <- (Xi*Ri+Xm*Rm-rf)/sqrt(VarPortfolio)
+    VarPortfolio <- (Xi*ibm_AnnVol)^2+(Xm*sp500_AnnVol)^2+Xi*Xm*Cov_ibmvssp500
+    RetPortfolio <- Xi*Ri+Xm*Rm-rf
+    SharpePortfolio <- RetPortfolio/sqrt(VarPortfolio)
+    Sharpe_mat[Pricei,round(NWeight*Xm)+1] <- SharpePortfolio
     if (MaxSharpe < SharpePortfolio) {
       MaxSharpe <- SharpePortfolio
       MaxSharpeXi <- Xi
@@ -94,14 +99,8 @@ for (Pricei in price_iterationscale) {
 }
 
 
-MinXiPricei
+paste("Algorithm price",MinXiPricei)
+# need to check why price did not match exactly CAPM price
+
 diff_eq_price <- StockInitialPrice-MinXiPricei
-diff_beta_price/StockInitialPrice
-
-InterestRate10YCBOE_url <- "http://real-chart.finance.yahoo.com/table.csv?s=%5ETNX&a=00&b=01&c=2005&d=00&e=01&f=2015&g=m&ignore=.csv"
-InterestRate <- yahoo.read(InterestRate10YCBOE_url)
-InterestRate[,3] <- c(log(InterestRate$Adj.Close[-length(InterestRate$Adj.Close)]/InterestRate$Adj.Close[-1]),0)
-names(InterestRate)[3] <- "LnReturns"
-
-hist(InterestRate$LnReturns,prob=T)
-curve(dnorm(x,mean=mean(InterestRate$LnReturns),sd=sd(InterestRate$LnReturns)),add=T)
+diff_eq_price/StockInitialPrice

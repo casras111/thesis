@@ -8,9 +8,9 @@ sp500 <- read.csv(file="sp500_10y.csv")
 ibm$Date <- as.Date(as.character(ibm$Date))
 sp500$Date <- as.Date(as.character(sp500$Date))
 
-par(mfrow=c(2,1),mar=c(2,4,2,4))
-plot(ibm,type="l",main="IBM")
-plot(sp500,type="l",main="SP500")
+#par(mfrow=c(2,1),mar=c(2,4,2,4))
+#plot(ibm,type="l",main="IBM")
+#plot(sp500,type="l",main="SP500")
 
 
 # calculate returns, stddev, correlations and statistic co-distribution
@@ -29,14 +29,14 @@ sp500 <- sp500 %>% mutate (Returns=Adj.Close/lead(Adj.Close)-1)
 #sp500 <- sp500 %>% mutate (LnReturns=log(Adj.Close)-log(lead(Adj.Close)))
 #sp500[nrow(sp500),"LnReturns"] <- 0 #fix first day NA return to 0
 
-hist(ibm$Returns,prob=T)
-curve(dnorm(x,mean=mean(ibm$Returns),sd=sd(ibm$Returns)),add=T)
-hist(sp500$Returns,prob=T)
-curve(dnorm(x,mean=mean(sp500$Returns),sd=sd(sp500$Returns)),add=T)
-par(mfrow=c(1,1))
+#hist(ibm$Returns,prob=T)
+#curve(dnorm(x,mean=mean(ibm$Returns),sd=sd(ibm$Returns)),add=T)
+#hist(sp500$Returns,prob=T)
+#curve(dnorm(x,mean=mean(sp500$Returns),sd=sd(sp500$Returns)),add=T)
+#par(mfrow=c(1,1))
 
-par(mar=c(5,4,4,2))
-plot(ibm$Returns,sp500$Returns,col="blue", pch=20)
+#par(mar=c(5,4,4,2))
+#plot(ibm$Returns,sp500$Returns,col="blue", pch=20)
 
 StockInitialPrice <- ibm$Adj.Close[120]
 StockFinalPrice <- ibm$Adj.Close[1]
@@ -101,80 +101,63 @@ CAPM_discount <- 1+rfm+beta_ibm*(sp500_MonthRet-rfm)
 ibm <- ibm %>% mutate (CAPMPrice=PredictPrice/CAPM_discount)
 
 NWeight <- 100 #precision for stock weight %, number of discrete steps
-#NPrices <- 200 #precision for stock price, number of discrete steps
-
 pct_iterationscale <- 0:NWeight/NWeight
-price_step <- 0.1 #precision for stock price
-#price_iterationscale <- 1:NPrices
-#need to fix for % of original price and smaller steps
+price_step <- 0.2 #precision for stock price
 
 #Sharpe_mat <- matrix(nrow=NPrices,ncol=NWeight+1)
 #rownames(Sharpe_mat)<-price_iterationscale
 #colnames(Sharpe_mat)<-pct_iterationscale
-vartime <- system.time(
-for (j in 1:(nrow(ibm)-1)) {
-  MinXi <- 1
-  #price_iterationscale <- (ibm$Adj.Close[j+1]/2):(ibm$Adj.Close[j+1]*2)
-  Pricei <- ibm$Adj.Close[j+1]/2
-  #for (Pricei in price_iterationscale) {
-  while ((Pricei < ibm$Adj.Close[j+1]*2) && (MinXi>0)) {
-    MaxSharpe <- -1000
-    for (Xm in pct_iterationscale) {
-      Xi=1-Xm
-      Ri <- ibm$PredictPrice[j]/Pricei-1
-      #VarPortfolio <- (Xi*ibm_AnnVol)^2+(Xm*sp500_AnnVol)^2+Xi*Xm*Cov_ibmvssp500
-      RiskPortfolio <- sd(Xi*ibm$Returns+Xm*sp500$Returns,na.rm=TRUE)
-      RetPortfolio <- Xi*Ri+Xm*sp500_MonthRet-rfm
-      SharpePortfolio <- RetPortfolio/RiskPortfolio
-      #    Sharpe_mat[Pricei,round(NWeight*Xm)+1] <- SharpePortfolio
-      if (MaxSharpe < SharpePortfolio) {
-        MaxSharpe <- SharpePortfolio
-        MaxSharpeXi <- Xi
-      } 
-    }
-    if (MinXi > MaxSharpeXi) {
-      MinXi <- MaxSharpeXi
-      MinXiPricei <- Pricei
-      ibm[j,"VAR_Price"] <- Pricei
-      MinXiMaxSharpe <- MaxSharpe
-    }
-    Pricei <- Pricei+price_step
-  }
-}
-)
 
 #Semivariance implementation
+#parameters: x - vector to calculate svar on, r - threshold
 svar <- function(x,r) {
   sum(pmin(x-r,0,na.rm=TRUE)^2)/(length(x)-1)
 }
 
-svartime <- system.time(
-  for (j in 1:(nrow(ibm)-1)) {
-    MinXi <- 1
-    Pricei <- ibm$Adj.Close[j+1]/2
-    while ((Pricei < ibm$Adj.Close[j+1]*2) && (MinXi>0)) {
-      MaxSortino <- -1000
-      for (Xm in pct_iterationscale) {
-        Xi=1-Xm
-        Ri <- ibm$PredictPrice[j]/Pricei-1
-        #VarPortfolio <- (Xi*ibm_AnnVol)^2+(Xm*sp500_AnnVol)^2+Xi*Xm*Cov_ibmvssp500
-        RiskPortfolio <- svar(Xi*ibm$Returns+Xm*sp500$Returns,rfm)
-        RetPortfolio <- Xi*Ri+Xm*sp500_MonthRet-rfm
-        SortinoPortfolio <- RetPortfolio/RiskPortfolio
-        if (MaxSortino < SortinoPortfolio) {
-          MaxSortino <- SortinoPortfolio
-          MaxSortinoXi <- Xi
-        } 
+#Returns stock price that has minimum % of stock in portfolio optimized
+#for Reward to Risk (RTR) function passed to function
+#Parameters:expected returns,expected price,risk measure to use and initial guess
+RTR <- function(RiskFunc,RetM,RF,PriceT,PriceGuess=0){
+  MinXi <- 1
+  Pricei <- PriceGuess/2
+  while ((Pricei < PriceGuess*2) && (MinXi>0)) {
+    MaxRTR <- -1000
+    Ri <- PriceT/Pricei-1
+    for (Xm in pct_iterationscale) {
+      Xi=1-Xm
+      #VarPortfolio <- (Xi*ibm_AnnVol)^2+(Xm*sp500_AnnVol)^2+Xi*Xm*Cov_ibmvssp500
+      if (RiskFunc=="sd") {
+        arglist <- list(Xi*ibm$Returns+Xm*sp500$Returns,na.rm=TRUE)
+      } else { #svar
+        arglist <- list(Xi*ibm$Returns+Xm*sp500$Returns,RF)
       }
-      if (MinXi > MaxSortinoXi) {
-        MinXi <- MaxSortinoXi
-        MinXiPricei <- Pricei
-        ibm[j,"SVAR_Price"] <- Pricei
-        MinXiMaxSortino <- MaxSortino
-      }
-      Pricei <- Pricei+price_step
+      RiskPortfolio <- do.call(RiskFunc,args=arglist)
+      RetPortfolio <- Xi*Ri+Xm*RetM-RF
+      RTRPortfolio <- RetPortfolio/RiskPortfolio
+      if (MaxRTR < RTRPortfolio) {
+        MaxRTR <- RTRPortfolio
+        MaxRTRXi <- Xi
+      } 
     }
+    if (MinXi > MaxRTRXi) {
+      MinXi <- MaxRTRXi
+      MinXiPricei <- Pricei
+      MinXiMaxSharpe <- MaxRTR
+    }
+    Pricei <- Pricei+price_step
   }
+  return(MinXiPricei)
+}
+
+vartime <- system.time(
+#  ibm <- ibm %>% rowwise() %>% 
+#    mutate(VAR_Price =RTR("sd",  sp500_MonthRet,rfm,PredictPrice,Adj.Close),
+#           SVAR_Price=RTR("svar",sp500_MonthRet,rfm,PredictPrice,Adj.Close))
+#)
+ for (j in 1:(nrow(ibm)-1)) {
+   ibm[j,"VAR_Price"]  <- RTR("sd",  sp500_MonthRet,rfm,ibm$PredictPrice[j],ibm$Adj.Close[j])
+   ibm[j,"SVAR_Price"] <- RTR("svar",sp500_MonthRet,rfm,ibm$PredictPrice[j],ibm$Adj.Close[j])
+ }
 )
 
 #sum of squares of the error for naive predict

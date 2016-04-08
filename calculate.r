@@ -100,19 +100,23 @@ beta_ibm <- cov_ibm_sp500/(ibm_MonthVol^2)
 CAPM_discount <- 1+rfm+beta_ibm*(sp500_MonthRet-rfm)
 ibm <- ibm %>% mutate (CAPMPrice=PredictPrice/CAPM_discount)
 
+N <- nrow(ibm)-1 #number of periods, without last one- N/A returns
 NWeight <- 100 #precision for stock weight %, number of discrete steps
-pct_iterationscale <- 0:NWeight/NWeight
+StockPct <- 0:NWeight/NWeight
 price_step <- 0.2 #precision for stock price
 
 #Sharpe_mat <- matrix(nrow=NPrices,ncol=NWeight+1)
 #rownames(Sharpe_mat)<-price_iterationscale
-#colnames(Sharpe_mat)<-pct_iterationscale
+#colnames(Sharpe_mat)<-StockPct
 
 #Semivariance implementation
 #parameters: x - vector to calculate svar on, r - threshold
-svar <- function(x,r) {
+svar <- function(x,r=rfm) {
   sum(pmin(x-r,0,na.rm=TRUE)^2)/(length(x)-1)
 }
+
+#Matrix NWeightxlength(returns) with historical return of all mixed portfolios
+RetMat <- StockPct%*%t(ibm$Returns[1:N])+(1-StockPct)%*%t(sp500$Returns[1:N])
 
 #Returns stock price that has minimum % of stock in portfolio optimized
 #for Reward to Risk (RTR) function passed to function
@@ -121,28 +125,17 @@ RTR <- function(RiskFunc,RetM,RF,PriceT,PriceGuess=0){
   MinXi <- 1
   Pricei <- PriceGuess/2
   while ((Pricei < PriceGuess*2) && (MinXi>0)) {
-    MaxRTR <- -1000
     Ri <- PriceT/Pricei-1
-    for (Xm in pct_iterationscale) {
-      Xi=1-Xm
-      #VarPortfolio <- (Xi*ibm_AnnVol)^2+(Xm*sp500_AnnVol)^2+Xi*Xm*Cov_ibmvssp500
-      if (RiskFunc=="sd") {
-        arglist <- list(Xi*ibm$Returns+Xm*sp500$Returns,na.rm=TRUE)
-      } else { #svar
-        arglist <- list(Xi*ibm$Returns+Xm*sp500$Returns,RF)
-      }
-      RiskPortfolio <- do.call(RiskFunc,args=arglist)
-      RetPortfolio <- Xi*Ri+Xm*RetM-RF
-      RTRPortfolio <- RetPortfolio/RiskPortfolio
-      if (MaxRTR < RTRPortfolio) {
-        MaxRTR <- RTRPortfolio
-        MaxRTRXi <- Xi
-      } 
-    }
+    #Vector length Nweight of returns of mixed portfolio
+    RetPortfolioVec <- StockPct*Ri+(1-StockPct)*RetM-RF
+    #Vector length Nweight of risk of mixed portfolio
+    RiskPortfolioVec <- apply(RetMat,1,RiskFunc)
+    #Vector length Nweight of risk of mixed portfolio
+    RTRPortfolio <- RetPortfolioVec/RiskPortfolioVec
+    MaxRTRXi <- StockPct[which.max(RTRPortfolio)] #use max RTR index to get stock %
     if (MinXi > MaxRTRXi) {
       MinXi <- MaxRTRXi
       MinXiPricei <- Pricei
-      MinXiMaxSharpe <- MaxRTR
     }
     Pricei <- Pricei+price_step
   }
@@ -150,14 +143,13 @@ RTR <- function(RiskFunc,RetM,RF,PriceT,PriceGuess=0){
 }
 
 vartime <- system.time(
-#  ibm <- ibm %>% rowwise() %>% 
-#    mutate(VAR_Price =RTR("sd",  sp500_MonthRet,rfm,PredictPrice,Adj.Close),
-#           SVAR_Price=RTR("svar",sp500_MonthRet,rfm,PredictPrice,Adj.Close))
-#)
- for (j in 1:(nrow(ibm)-1)) {
-   ibm[j,"VAR_Price"]  <- RTR("sd",  sp500_MonthRet,rfm,ibm$PredictPrice[j],ibm$Adj.Close[j])
-   ibm[j,"SVAR_Price"] <- RTR("svar",sp500_MonthRet,rfm,ibm$PredictPrice[j],ibm$Adj.Close[j])
- }
+  #  ibm <- ibm %>% rowwise() %>% 
+  #    mutate(VAR_Price =RTR("sd",  sp500_MonthRet,rfm,PredictPrice,Adj.Close),
+  #           SVAR_Price=RTR("svar",sp500_MonthRet,rfm,PredictPrice,Adj.Close))
+  for (j in 1:N) {
+    ibm[j,"VAR_Price"]  <- RTR("sd",  sp500_MonthRet,rfm,ibm$PredictPrice[j],ibm$Adj.Close[j])
+    ibm[j,"SVAR_Price"] <- RTR("svar",sp500_MonthRet,rfm,ibm$PredictPrice[j],ibm$Adj.Close[j])
+  }
 )
 
 #sum of squares of the error for naive predict

@@ -1,177 +1,158 @@
 library(ggplot2)
 library(dplyr)
+library(reshape2)
+library(gridExtra)
 
-# Load data from disk
-ibm <- read.csv(file="ibm_10y.csv")
-sp500 <- read.csv(file="sp500_10y.csv")
+# Load data from disk: stock, LIBOR interest rate and MSCI global index
+ipath <- file.path("../DataRaw","ibm_10y.csv")
+ibm <- read.csv(ipath, colClasses = c("Date","numeric"))
+lpath <- file.path("../DataWork","LIBOR.csv")
+LIBOR <- read.csv(lpath, colClasses = c("Date","numeric"))
+mpath <- file.path("../DataWork","MSCI.csv")
+MSCI <- read.csv(mpath, colClasses = c("Date","numeric"))
 
-ibm$Date <- as.Date(as.character(ibm$Date))
-sp500$Date <- as.Date(as.character(sp500$Date))
+dat <- cbind(LIBOR,MSCI$Price,ibm$Price)
+names(dat) <- c("Date","LIBOR","MSCI","IBM")
+norm_col <- function(x) x/x[length(x)]  #divide by last entry, oldest
+plotdat <- mutate_each(select(dat,Date,MSCI,IBM),funs(norm_col),MSCI,IBM)
+plotdat <- melt(plotdat,id="Date",value.name = "Price")
+ggplot(plotdat,aes(x=Date,y=Price,colour=variable))+geom_line()+
+  ggtitle("MSCI vs IBM scaled returns")
 
-#par(mfrow=c(2,1),mar=c(2,4,2,4))
-#plot(ibm,type="l",main="IBM")
-#plot(sp500,type="l",main="SP500")
-
+g1 <- ggplot(ibm,aes(x=Date,y=Price))+geom_line()+labs(x="Date",y="Price")+
+  ggtitle("IBM stock price")
+g2 <- ggplot(MSCI,aes(x=Date,y=Price))+geom_line()+labs(x="Date",y="Price")+
+  ggtitle("MSCI index price")
+g3 <- ggplot(LIBOR,aes(x=Date,y=Rate))+geom_line()+labs(x="Date",y="Rate")+
+  ggtitle("LIBOR rate")
+grid.arrange(g1,g2,g3,nrow=3)
 
 # calculate returns, stddev, correlations and statistic co-distribution
-
-#ibm[,"LnReturns"] <- c(log(ibm$Adj.Close[-nrow(ibm)]/ibm$Adj.Close[-1]),0)
-#names(ibm)[3] <- "LnReturns"
-#sp500[,3] <- c(log(sp500$Adj.Close[-nrow(sp500)]/sp500$Adj.Close[-1]),0)
-#names(sp500)[3] <- "LnReturns"
-
 #assume data sorted by latest date first
-ibm   <- ibm   %>% mutate (Returns=Adj.Close/lead(Adj.Close)-1) 
-#                %>% filter(!is.na(Returns))
-sp500 <- sp500 %>% mutate (Returns=Adj.Close/lead(Adj.Close)-1)
-#              %>% filter(!is.na(Returns))
-#ibm[nrow(ibm),"LnReturns"] <- 0 #fix first day NA return to 0
-#sp500 <- sp500 %>% mutate (LnReturns=log(Adj.Close)-log(lead(Adj.Close)))
-#sp500[nrow(sp500),"LnReturns"] <- 0 #fix first day NA return to 0
+ibm  <- mutate (ibm, Returns=Price/lead(Price)-1) 
+MSCI <- mutate (MSCI,Returns=Price/lead(Price)-1)
 
-#hist(ibm$Returns,prob=T)
-#curve(dnorm(x,mean=mean(ibm$Returns),sd=sd(ibm$Returns)),add=T)
-#hist(sp500$Returns,prob=T)
-#curve(dnorm(x,mean=mean(sp500$Returns),sd=sd(sp500$Returns)),add=T)
-#par(mfrow=c(1,1))
+ggplot(data.frame(msci=MSCI$Return,ibm=ibm$Return))+
+  geom_density(aes(x=msci),fill="grey",alpha=0.5)+
+  geom_density(aes(x=ibm),fill="blue",alpha=0.2) +ggtitle("Returns distributions")
 
-#par(mar=c(5,4,4,2))
-#plot(ibm$Returns,sp500$Returns,col="blue", pch=20)
+ibm_MonthVol  <- sd(ibm$Returns,na.rm=TRUE)
+msci_MonthVol <- sd(MSCI$Returns,na.rm=TRUE)
 
-StockInitialPrice <- ibm$Adj.Close[120]
-StockFinalPrice <- ibm$Adj.Close[1]
-MarketInitialPrice <- sp500$Adj.Close[120]
-MarketFinalPrice <- sp500$Adj.Close[1]
-
-ibm_MonthVol    <- sd(ibm$Returns,na.rm=TRUE)
-sp500_MonthVol  <- sd(sp500$Returns,na.rm=TRUE)
-#ibm_AnnVol    <- ibm_MonthVol*sqrt(12)
-#sp500_AnnVol  <- sp500_MonthVol*sqrt(12)
-#ibm_10yVol    <- ibm_MonthVol*sqrt(120)
-#sp500_10yVol  <- sp500_MonthVol*sqrt(120)
-
-ibm_MonthRet    <- mean(ibm$Returns,na.rm=TRUE)
-sp500_MonthRet  <- mean(sp500$Returns,na.rm=TRUE)
-#ibm_AnnRet    <- ibm_MonthRet*12
-#sp500_AnnRet  <- sp500_MonthRet*12
-#sp500_10yRet <- MarketFinalPrice/MarketInitialPrice-1 #absolute 10y return
+ibm_MonthRet  <- mean(ibm$Returns,na.rm=TRUE)
+msci_MonthRet <- mean(MSCI$Returns,na.rm=TRUE)
 
 # risk free annual interest 10y Treasury bills yield 3/1/2005
 #source http://www.treasury.gov/resource-center/data-chart-center/interest-rates/Pages/TextView.aspx?data=yieldYear&year=2005
-rf <-0.0423  # annual, change to monthly series Tbill or LIBOR
-rfm <- rf/12 # monthly, placeholder, see above
-#rf10y <- (1+rf)^10-1
+# rf <-0.0423  # annual, change to monthly series Tbill or LIBOR
+# rf <- rf/12 # monthly, placeholder, see above
 
-#plot(c(0,ibm_AnnVol,sp500_AnnVol),c(rf,ibm_AnnRet,sp500_AnnRet),
-#     xlab="Yearly Standard Deviation",ylab="Yearly Mean Return",ylim=c(0,0.1))
-#text(c(0,ibm_AnnVol,sp500_AnnVol),c(rf,ibm_AnnRet,sp500_AnnRet),
-#     c("Rf","IBM","SP500"),pos=3,cex=0.7)
-#abline(rf,(sp500_AnnRet-rf)/sp500_AnnVol,col="blue",lty="dotted")
-
-#plot(c(0,ibm_MonthVol,sp500_MonthVol),c(rfm,ibm_MonthRet,sp500_MonthRet),
+#plot(c(0,ibm_MonthVol,sp500_MonthVol),c(rf,ibm_MonthRet,sp500_MonthRet),
 #     xlab="Monthly Standard Deviation",ylab="Mean Monthly Return",ylim=c(0,0.01))
-#text(c(0,ibm_MonthVol,sp500_MonthVol),c(rfm,ibm_MonthRet,sp500_MonthRet),
+#text(c(0,ibm_MonthVol,sp500_MonthVol),c(rf,ibm_MonthRet,sp500_MonthRet),
 #     c("Rf","IBM","SP500"),pos=3,cex=0.7)
-#abline(rfm,(sp500_MonthRet-rfm)/sp500_MonthVol,col="blue",lty="dotted")
+#abline(rf,(sp500_MonthRet-rf)/sp500_MonthVol,col="blue",lty="dotted")
 
-#Correlation_ibmvssp500 <- cor(ibm$LnReturns,sp500$LnReturns)
-#Cov_ibmvssp500  <- Correlation_ibmvssp500*ibm_MonthVol*sp500_MonthVol
-
-#beta_ibm_sp500 <- Correlation_ibmvssp500*ibm_MonthVol/sp500_MonthVol
-  
-#discount_factor <- 1+rfm+beta_ibmvssp500*(sp500_MonthRet-rfm)
-#discount_factor2 <- 1+rf10y+beta_ibmvssp500*(sp500_10yRet-rf10y)
-#estimatedprice_beta <- StockFinalPrice/discount_factor^10
-#estimatedprice_beta2 <- StockFinalPrice/discount_factor2
-#diff_beta_price <- StockInitialPrice-estimatedprice_beta2
-
-
-#paste(ibm$Date[120],StockInitialPrice)
-#paste(ibm$Date[1],StockFinalPrice)
-#paste("estimated CAPM price",estimatedprice_beta2)
-
-#(diff_beta_price/StockInitialPrice)
-
-#Expected price, naive mean return forward estimation
-ibm <- ibm %>% mutate (PredictPrice=Adj.Close*(1+ibm_MonthRet))
+#Expected next period price, naive mean return forward estimation
+#ibm <- mutate(ibm,PredictPrice=lead(Price)*(1+ibm_MonthRet))
+ibm <- mutate(ibm,PredictPrice=Price*(1+ibm_MonthRet))
 #Price taking into account CAPM risk
-cov_ibm_sp500 <- cov(ibm$Returns,sp500$Returns,use="complete.obs")
-beta_ibm <- cov_ibm_sp500/(ibm_MonthVol^2)
-CAPM_discount <- 1+rfm+beta_ibm*(sp500_MonthRet-rfm)
-ibm <- ibm %>% mutate (CAPMPrice=PredictPrice/CAPM_discount)
+cov_ibm_msci <- cov(ibm$Returns,MSCI$Returns,use="complete.obs")
+beta_ibm <- cov_ibm_msci/(ibm_MonthVol^2)
+rf <- LIBOR[NROW(LIBOR),"Rate"]/12/100 #use 2005 first yearly rate, need to fix for monthly
+CAPM_discount <- 1+rf+beta_ibm*(msci_MonthRet-rf)
+ibm <- mutate (ibm, CAPMPrice=PredictPrice/CAPM_discount)
 
 N <- nrow(ibm)-1 #number of periods, without last one- N/A returns
-NWeight <- 100 #precision for stock weight %, number of discrete steps
-StockPct <- 0:NWeight/NWeight
-price_step <- 0.2 #precision for stock price
-
-#Sharpe_mat <- matrix(nrow=NPrices,ncol=NWeight+1)
-#rownames(Sharpe_mat)<-price_iterationscale
-#colnames(Sharpe_mat)<-StockPct
+NWeight <- 1000 #precision for stock weight %, number of discrete steps
+StockPct <- 0:NWeight/NWeight #vector for stock % in mixed portfolio
+ri_step <- 0.0001 #precision for stock return
 
 #Semivariance implementation
 #parameters: x - vector to calculate svar on, r - threshold
-svar <- function(x,r=rfm) {
-  sum(pmin(x-r,0,na.rm=TRUE)^2)/(length(x)-1)
+svar <- function(x,r=rf) {
+  sum(pmin(x-r,0,na.rm=TRUE)^2)/(length(x)-1) #need to fix n for NA?
+}
+
+#VAR implementation
+#parameters: x - vector to calculate svar on, r - threshold
+VAR5pct <- function(x,r=0.05) {
+  r5 <- quantile(x,r,names=F)
+  if (r5 < 0) {r5 <- (-1)*r5} else r5 <- 0 #NA for positive
+  return(r5)
 }
 
 #Matrix NWeightxlength(returns) with historical return of all mixed portfolios
-RetMat <- StockPct%*%t(ibm$Returns[1:N])+(1-StockPct)%*%t(sp500$Returns[1:N])
+#Weighted returns for each period in columns, rows time series return for weight
+RetMat <- StockPct%*%t(ibm$Returns[1:N])+(1-StockPct)%*%t(MSCI$Returns[1:N])
+rownames(RetMat) <- paste("IBMpct",StockPct*100,sep='')
+colnames(RetMat) <- paste("Month",1:N,sep='')
 
-#Returns stock price that has minimum % of stock in portfolio optimized
-#for Reward to Risk (RTR) function passed to function
+#RTR function returns stock return that has minimum % of stock in portfolio
+#optimized for Reward to Risk (RTR) function argument
 #Parameters:expected returns,expected price,risk measure to use and initial guess
-RTR <- function(RiskFunc,RetM,RF,PriceT,PriceGuess=0){
-  MinXi <- 1
-  Pricei <- PriceGuess/2
-  while ((Pricei < PriceGuess*2) && (MinXi>0)) {
-    Ri <- PriceT/Pricei-1
-    #Vector length Nweight of returns of mixed portfolio
-    RetPortfolioVec <- StockPct*Ri+(1-StockPct)*RetM-RF
-    #Vector length Nweight of risk of mixed portfolio
-    RiskPortfolioVec <- apply(RetMat,1,RiskFunc)
-    #Vector length Nweight of risk of mixed portfolio
+# RTR <- function(RiskFunc,Rm,Rf,PriceT,PriceGuess=0){
+RTR <- function(RiskFunc,Rm,Rf,RiGuess=0.5){
+   MinXi <- 1 #stock allocation in optimal portfolio, start with large 100%
+   # Ri: stock return that brings to minimum % of stock in optimal market+stock portfolio
+   Ri <- RiGuess*2 #start with high return guess, low price of stock
+   #Vector of length Nweight of risk of mixed portfolio
+   RiskPortfolioVec <- apply(RetMat,1,RiskFunc)
+   while ((Ri > 0) && (MinXi>0)) { #stops when arrives at 0% allocation of stock (MinXi)
+    #Vector of length Nweight of returns of mixed portfolio for average values
+    RetPortfolioVec <- StockPct*Ri+(1-StockPct)*Rm-Rf
+    #Vector of length Nweight of Reward to Risk of mixed portfolio
     RTRPortfolio <- RetPortfolioVec/RiskPortfolioVec
     MaxRTRXi <- StockPct[which.max(RTRPortfolio)] #use max RTR index to get stock %
     if (MinXi > MaxRTRXi) {
       MinXi <- MaxRTRXi
-      MinXiPricei <- Pricei
+      MinRi <- Ri
     }
-    Pricei <- Pricei+price_step
+    Ri <- Ri-ri_step
   }
-  return(MinXiPricei)
+   return(MinRi)
 }
 
-vartime <- system.time(
-  #  ibm <- ibm %>% rowwise() %>% 
-  #    mutate(VAR_Price =RTR("sd",  sp500_MonthRet,rfm,PredictPrice,Adj.Close),
-  #           SVAR_Price=RTR("svar",sp500_MonthRet,rfm,PredictPrice,Adj.Close))
-  for (j in 1:N) {
-    ibm[j,"VAR_Price"]  <- RTR("sd",  sp500_MonthRet,rfm,ibm$PredictPrice[j],ibm$Adj.Close[j])
-    ibm[j,"SVAR_Price"] <- RTR("svar",sp500_MonthRet,rfm,ibm$PredictPrice[j],ibm$Adj.Close[j])
-  }
-)
+#Rprof()
+#vartime <- system.time(
+var_discount  <- 1+RTR("sd",     msci_MonthRet,rf,ibm_MonthRet)
+svar_discount <- 1+RTR("svar",   msci_MonthRet,rf,ibm_MonthRet)
+VAR5_discount <- 1+RTR("VAR5pct",msci_MonthRet,rf,ibm_MonthRet)
+for (j in 1:N) {
+  #Current month price = earlier month*predicted return based on risk measures
+  ibm[j,"Var_Price"]     <- ibm$PredictPrice[j]/var_discount
+  ibm[j,"SVar_Price"]    <- ibm$PredictPrice[j]/svar_discount
+  ibm[j,"VAR5pct_Price"] <- ibm$PredictPrice[j]/VAR5_discount
+}
+#)
+#Rprof(NULL)
 
-#sum of squares of the error for naive predict
-ibm %>% filter(!is.na(Returns)) %>% 
-  mutate(err = (Adj.Close-PredictPrice)^2) %>% summarize(mse=sum(err))
 #sum of squares of the error for variance risk predict
-ibm %>% filter(!is.na(Returns)) %>% 
-  mutate(err = (Adj.Close-VAR_Price)^2) %>% summarize(mse=sum(err))
+MSE2 <- ibm %>% filter(!is.na(Returns)) %>% 
+  mutate(err = (Price-Var_Price)^2) %>% summarize(mse=sum(err))
+#sum of squares of the error for semivariance risk predict
+MSE3 <- ibm %>% filter(!is.na(Returns)) %>% 
+  mutate(err = (Price-SVar_Price)^2) %>% summarize(mse=sum(err))
+#sum of squares of the error for VAR risk predict
+MSE4 <- ibm %>% filter(!is.na(Returns)) %>% 
+  mutate(err = (Price-VAR5pct_Price)^2) %>% summarize(mse=sum(err))
+
+sprintf("Variance MSE %.1f, Semivariance MSE %.1f, VAR at 5 pct %.1f",MSE2,MSE3,MSE4)
 
 #Strategy of buy if VAR/SVAR price below market price,sell otherwise, discounted
-ibm <- ibm %>% 
-  mutate (ProfitVAR =
-            ifelse(lead(VAR_Price)>lead(Adj.Close),
-                   (Adj.Close-lead(Adj.Close)*(1+rfm)),
-                   (lead(Adj.Close)*(1+rfm)-Adj.Close)),
-          ProfitSVAR =
-            ifelse(lead(SVAR_Price)>lead(Adj.Close),
-                   (Adj.Close-lead(Adj.Close)*(1+rfm)),
-                   (lead(Adj.Close)*(1+rfm)-Adj.Close)))
+#not good check, always same profit if always buys
+# ibm <- ibm %>% 
+#   mutate (ProfitVAR =
+#             ifelse(lead(Var_Price)>lead(Adj.Close),
+#                    (Adj.Close-lead(Adj.Close)*(1+rf)),
+#                    (lead(Adj.Close)*(1+rf)-Adj.Close)),
+#           ProfitSVAR =
+#             ifelse(lead(SVar_Price)>lead(Adj.Close),
+#                    (Adj.Close-lead(Adj.Close)*(1+rf)),
+#                    (lead(Adj.Close)*(1+rf)-Adj.Close)))
 #total VAR + SVAR profit
-sum(ibm$ProfitVAR,na.rm=TRUE)
-sum(ibm$ProfitSVAR,na.rm=TRUE)
+# sum(ibm$ProfitVAR,na.rm=TRUE)
+# sum(ibm$ProfitSVAR,na.rm=TRUE)
 #ibm %>% filter(!is.na(ProfitVAR)) %>% summarize(prVAR=sum(ProfitVAR))
 
 (head(ibm))

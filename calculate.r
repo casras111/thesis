@@ -47,24 +47,25 @@ msci_MonthRet <- mean(MSCI$Returns,na.rm=TRUE)
 # rf <-0.0423  # annual, change to monthly series Tbill or LIBOR
 # rf <- rf/12 # monthly, placeholder, see above
 
-#plot(c(0,ibm_MonthVol,sp500_MonthVol),c(rf,ibm_MonthRet,sp500_MonthRet),
-#     xlab="Monthly Standard Deviation",ylab="Mean Monthly Return",ylim=c(0,0.01))
-#text(c(0,ibm_MonthVol,sp500_MonthVol),c(rf,ibm_MonthRet,sp500_MonthRet),
-#     c("Rf","IBM","SP500"),pos=3,cex=0.7)
-#abline(rf,(sp500_MonthRet-rf)/sp500_MonthVol,col="blue",lty="dotted")
-
 #Expected next period price, naive mean return forward estimation
 #ibm <- mutate(ibm,PredictPrice=lead(Price)*(1+ibm_MonthRet))
 ibm <- mutate(ibm,PredictPrice=Price*(1+ibm_MonthRet))
 #Price taking into account CAPM risk
 cov_ibm_msci <- cov(ibm$Returns,MSCI$Returns,use="complete.obs")
 beta_ibm <- cov_ibm_msci/(ibm_MonthVol^2)
-rf <- LIBOR[NROW(LIBOR),"Rate"]/12/100 #use 2005 first yearly rate, need to fix for monthly
-CAPM_discount <- 1+rf+beta_ibm*(msci_MonthRet-rf)
+CAPM_discount <- 1+LIBOR$Rate/12/100+beta_ibm*(msci_MonthRet-LIBOR$Rate/12/100)
 ibm <- mutate (ibm, CAPMPrice=PredictPrice/CAPM_discount)
 
+rf <- mean(LIBOR$Rate)/12/100 #use arithmetic mean, geometric compound better?
+#graph showing CAPM prediction for return of stock vs market and risk free rate
+plot(c(0,ibm_MonthVol,msci_MonthVol),c(rf,ibm_MonthRet,msci_MonthRet),
+    xlab="Monthly Standard Deviation",ylab="Mean Monthly Return",ylim=c(0,0.01))
+text(c(0,ibm_MonthVol,msci_MonthVol),c(rf,ibm_MonthRet,msci_MonthRet),
+    c("Rf","IBM","MSCI"),pos=3,cex=0.7)
+abline(rf,(msci_MonthRet-rf)/msci_MonthVol,col="blue",lty="dotted")
+
 N <- nrow(ibm)-1 #number of periods, without last one- N/A returns
-NWeight <- 1000 #precision for stock weight %, number of discrete steps
+NWeight <- 100 #precision for stock weight %, number of discrete steps
 StockPct <- 0:NWeight/NWeight #vector for stock % in mixed portfolio
 ri_step <- 0.0001 #precision for stock return
 
@@ -96,11 +97,16 @@ RTR <- function(RiskFunc,Rm,Rf,RiGuess=0.5){
    MinXi <- 1 #stock allocation in optimal portfolio, start with large 100%
    # Ri: stock return that brings to minimum % of stock in optimal market+stock portfolio
    Ri <- RiGuess*2 #start with high return guess, low price of stock
-   #Vector of length Nweight of risk of mixed portfolio
-   RiskPortfolioVec <- apply(RetMat,1,RiskFunc)
+
    while ((Ri > 0) && (MinXi>0)) { #stops when arrives at 0% allocation of stock (MinXi)
     #Vector of length Nweight of returns of mixed portfolio for average values
     RetPortfolioVec <- StockPct*Ri+(1-StockPct)*Rm-Rf
+    #adapt stock return matrix to new average return of stock by assuming linear proportion
+    RetMat <- StockPct%*%t(ibm$Returns[1:N]*Ri/ibm_MonthRet)+(1-StockPct)%*%t(MSCI$Returns[1:N])
+    rownames(RetMat) <- paste("IBMpct",StockPct*100,sep='')
+    colnames(RetMat) <- paste("Month",1:N,sep='')
+    #Vector of length Nweight of risk of mixed portfolio
+    RiskPortfolioVec <- apply(RetMat,1,RiskFunc)
     #Vector of length Nweight of Reward to Risk of mixed portfolio
     RTRPortfolio <- RetPortfolioVec/RiskPortfolioVec
     MaxRTRXi <- StockPct[which.max(RTRPortfolio)] #use max RTR index to get stock %
@@ -115,11 +121,13 @@ RTR <- function(RiskFunc,Rm,Rf,RiGuess=0.5){
 
 #Rprof()
 #vartime <- system.time(
-var_discount  <- 1+RTR("sd",     msci_MonthRet,rf,ibm_MonthRet)
-svar_discount <- 1+RTR("svar",   msci_MonthRet,rf,ibm_MonthRet)
-VAR5_discount <- 1+RTR("VAR5pct",msci_MonthRet,rf,ibm_MonthRet)
+
 for (j in 1:N) {
-  #Current month price = earlier month*predicted return based on risk measures
+  rf <- LIBOR$Rate[j]
+  var_discount  <- 1+RTR("sd",     msci_MonthRet,rf,ibm_MonthRet)
+  svar_discount <- 1+RTR("svar",   msci_MonthRet,rf,ibm_MonthRet)
+  VAR5_discount <- 1+RTR("VAR5pct",msci_MonthRet,rf,ibm_MonthRet)
+  #Current month price = naive next month predicted return discounted by risk measures
   ibm[j,"Var_Price"]     <- ibm$PredictPrice[j]/var_discount
   ibm[j,"SVar_Price"]    <- ibm$PredictPrice[j]/svar_discount
   ibm[j,"VAR5pct_Price"] <- ibm$PredictPrice[j]/VAR5_discount

@@ -38,6 +38,9 @@ ggplot(data.frame(msci=MSCI$Return,ibm=ibm$Return))+
   geom_density(aes(x=msci),fill="grey",alpha=0.5)+
   geom_density(aes(x=ibm),fill="blue",alpha=0.2) +ggtitle("Returns distributions")
 
+ggplot(data.frame(msci=MSCI$Return,ibm=ibm$Return),aes(x=msci,y=ibm))+geom_point()+
+  ggtitle("Returns distributions")
+
 ibm_MonthVol  <- sd(ibm$Returns,na.rm=TRUE)
 msci_MonthVol <- sd(MSCI$Returns,na.rm=TRUE)
 
@@ -48,13 +51,13 @@ msci_MonthRet <- mean(MSCI$Returns,na.rm=TRUE)
 #source http://www.treasury.gov/resource-center/data-chart-center/interest-rates/Pages/TextView.aspx?data=yieldYear&year=2005
 
 #Expected next period price, mean return forward estimation
-#ibm <- mutate(ibm,PredictPrice=lead(Price)*(1+ibm_MonthRet))
-ibm <- mutate(ibm,PredictPrice=Price*(1+ibm_MonthRet))
+#ibm <- mutate(ibm,PredictedNextPeriodPrice=lead(Price)*(1+ibm_MonthRet))
+ibm <- mutate(ibm,PredictedNextPeriodPrice=Price*(1+ibm_MonthRet))
 #Price taking into account CAPM risk
 cov_ibm_msci <- cov(ibm$Returns,MSCI$Returns,use="complete.obs")
 beta_ibm <- cov_ibm_msci/(ibm_MonthVol^2)
 CAPM_discount <- 1+LIBOR$Rate+beta_ibm*(msci_MonthRet-LIBOR$Rate)
-ibm <- mutate (ibm, CAPMPrice=PredictPrice/CAPM_discount)
+ibm <- mutate (ibm, CAPMPrice=PredictedNextPeriodPrice/CAPM_discount)
 
 rfplot <- mean(LIBOR$Rate)  #use arithmetic mean, geometric compound better?
 #graph showing CAPM prediction for return of stock vs market and risk free rate
@@ -99,10 +102,10 @@ RTR <- function(RiskFunc,Rm,Rf,RiGuess=0.5){
    Ri <- RiGuess*2 #start with high return guess, low price of stock
    cap_pct <- 0.02 #percent of capitalization of stock out of total market index
    while ((Ri > 0) && (MinXi > cap_pct)) { #stops when arrives at 0% allocation of stock (MinXi)
-    #Vector of length Nweight of returns of mixed portfolio for average values
+    #Vector of length Nweight of returns of mixed portfolio for average expected return values
     RetPortfolioVec <- StockPct*Ri+(1-StockPct)*Rm-Rf
     #adapt stock return matrix to new average return of stock
-    RetMat <- StockPct%*%t((ibm$Returns[1:N]+1)*Ri/ibm_MonthRet-1) +
+    RetMat <- StockPct%*%t((ibm$Returns[1:N]+1)*(1+Ri)/(1+ibm_MonthRet)-1) +
              (1-StockPct)%*%t(MSCI$Returns[1:N])
     rownames(RetMat) <- paste("IBMpct",StockPct*100,sep='')
     colnames(RetMat) <- paste("Month",1:N,sep='')
@@ -121,46 +124,50 @@ RTR <- function(RiskFunc,Rm,Rf,RiGuess=0.5){
 }
 
 #Rprof()
-#vartime <- system.time(
-
+vartime <- system.time(
 for (j in 1:N) {
   rf <- LIBOR$Rate[j]
   var_discount  <- 1+RTR("sd",     msci_MonthRet,rf,ibm_MonthRet)
   svar_discount <- 1+RTR("svar",   msci_MonthRet,rf,ibm_MonthRet)
   VAR5_discount <- 1+RTR("VAR5pct",msci_MonthRet,rf,ibm_MonthRet)
   #Current month price = naive next month predicted return discounted by risk measures
-  ibm[j,"Var_Price"]     <- ibm$PredictPrice[j]/var_discount
-  ibm[j,"SVar_Price"]    <- ibm$PredictPrice[j]/svar_discount
-  ibm[j,"VAR5pct_Price"] <- ibm$PredictPrice[j]/VAR5_discount
+  ibm[j,"VarPrice"]     <- ibm$PredictedNextPeriodPrice[j]/var_discount
+  ibm[j,"SVarPrice"]    <- ibm$PredictedNextPeriodPrice[j]/svar_discount
+  ibm[j,"VaR5pctPrice"] <- ibm$PredictedNextPeriodPrice[j]/VAR5_discount
+  ibm[j,"PredRetVar"]     <- var_discount-1
+  ibm[j,"PredRetSVar"]    <- svar_discount-1
+  ibm[j,"PredretVaR5pct"] <- VAR5_discount-1
 }
-#)
+)
 #Rprof(NULL)
 
-#sum of squares of the error for variance risk predict
-MSE1 <- ibm %>% filter(!is.na(Returns)) %>% 
-  mutate(err = (Price-CAPMPrice)^2) %>% summarize(mse=sum(err))
-#sum of squares of the error for variance risk predict
-MSE2 <- ibm %>% filter(!is.na(Returns)) %>% 
-  mutate(err = (Price-Var_Price)^2) %>% summarize(mse=sum(err))
-#sum of squares of the error for semivariance risk predict
-MSE3 <- ibm %>% filter(!is.na(Returns)) %>% 
-  mutate(err = (Price-SVar_Price)^2) %>% summarize(mse=sum(err))
-#sum of squares of the error for VAR risk predict
-MSE4 <- ibm %>% filter(!is.na(Returns)) %>% 
-  mutate(err = (Price-VAR5pct_Price)^2) %>% summarize(mse=sum(err))
+# TBD add regression between history average return and predicted return for different stocks and check R2
 
-sprintf("CAPM MSE %.1f, Variance MSE %.1f, Semivariance MSE %.1f, VAR at 5 pct %.1f",
-        MSE1,MSE2,MSE3,MSE4)
+#sum of squares of the error for variance risk predict
+RMSE1 <- ibm %>% filter(!is.na(Returns)) %>% 
+  mutate(err = (Price-CAPMPrice)^2) %>% summarize(mse=sqrt(mean(err)))
+#sum of squares of the error for variance risk predict
+RMSE2 <- ibm %>% filter(!is.na(Returns)) %>% 
+  mutate(err = (Price-VarPrice)^2) %>% summarize(mse=sqrt(mean(err)))
+#sum of squares of the error for semivariance risk predict
+RMSE3 <- ibm %>% filter(!is.na(Returns)) %>% 
+  mutate(err = (Price-SVarPrice)^2) %>% summarize(mse=sqrt(mean(err)))
+#sum of squares of the error for VAR risk predict
+RMSE4 <- ibm %>% filter(!is.na(Returns)) %>% 
+  mutate(err = (Price-VaR5pctPrice)^2) %>% summarize(mse=sqrt(mean(err)))
+
+sprintf("CAPM RMSE %.5f, Variance RMSE %.5f, Semivariance RMSE %.5f, VAR at 5 pct %.5f",
+        RMSE1,RMSE2,RMSE3,RMSE4)
 
 #Strategy of buy if VAR/SVAR price below market price,sell otherwise, discounted
 #not good check, always same profit if always buys
 # ibm <- ibm %>% 
 #   mutate (ProfitVAR =
-#             ifelse(lead(Var_Price)>lead(Adj.Close),
+#             ifelse(lead(VarPrice)>lead(Adj.Close),
 #                    (Adj.Close-lead(Adj.Close)*(1+rf)),
 #                    (lead(Adj.Close)*(1+rf)-Adj.Close)),
 #           ProfitSVAR =
-#             ifelse(lead(SVar_Price)>lead(Adj.Close),
+#             ifelse(lead(SVarPrice)>lead(Adj.Close),
 #                    (Adj.Close-lead(Adj.Close)*(1+rf)),
 #                    (lead(Adj.Close)*(1+rf)-Adj.Close)))
 #total VAR + SVAR profit
@@ -169,6 +176,18 @@ sprintf("CAPM MSE %.1f, Variance MSE %.1f, Semivariance MSE %.1f, VAR at 5 pct %
 #ibm %>% filter(!is.na(ProfitVAR)) %>% summarize(prVAR=sum(ProfitVAR))
 
 (head(ibm))
+
+plotdat2 <- melt(select(ibm,Date,Price,CAPMPrice,VarPrice,SVarPrice,VaR5pctPrice),
+                 id="Date",value.name="PlotPrice")
+ggplot(plotdat2,aes(x=Date,y=PlotPrice,colour=variable))+geom_line()+
+  ggtitle("Actual price compared to risk discount estimated prices")
+pricesdat <- select(ibm,Date,Price,CAPMPrice,VarPrice,SVarPrice,VaR5pctPrice)
+pricesdat[,-1] <- pricesdat[,-1]-pricesdat$Price
+plotdat2 <- melt(pricesdat,id="Date",value.name="PlotPrice")
+ggplot(plotdat2,aes(x=Date,y=PlotPrice,colour=variable))+geom_line()+
+  labs(y="Price difference")+
+  ggtitle("Difference of different risk discount estimators from real price")
+
 
 #plot(x=colnames(Sharpe_mat),y=Sharpe_mat[MinXiPricei,],type="l",
 #     xlab="% market",ylab="Sharpe of portfolio",

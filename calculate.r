@@ -2,6 +2,7 @@ library(ggplot2)
 library(dplyr)
 library(reshape2)
 library(gridExtra)
+library(utils)
 
 # Load data from disk: stock, LIBOR interest rate and MSCI global index
 ipath <- file.path("../DataRaw","ibm_10y.csv")
@@ -51,13 +52,12 @@ msci_MonthRet <- mean(MSCI$Returns,na.rm=TRUE)
 #source http://www.treasury.gov/resource-center/data-chart-center/interest-rates/Pages/TextView.aspx?data=yieldYear&year=2005
 
 #Expected next period price, mean return forward estimation
-#ibm <- mutate(ibm,PredictedNextPeriodPrice=lead(Price)*(1+ibm_MonthRet))
-ibm <- mutate(ibm,PredictedNextPeriodPrice=Price*(1+ibm_MonthRet))
+ibm <- mutate(ibm,PredictNextPrice=Price*(1+ibm_MonthRet))
 #Price taking into account CAPM risk
 cov_ibm_msci <- cov(ibm$Returns,MSCI$Returns,use="complete.obs")
 beta_ibm <- cov_ibm_msci/(ibm_MonthVol^2)
 CAPM_discount <- 1+LIBOR$Rate+beta_ibm*(msci_MonthRet-LIBOR$Rate)
-ibm <- mutate (ibm, CAPMPrice=PredictedNextPeriodPrice/CAPM_discount)
+ibm <- mutate (ibm, CAPMPrice=PredictNextPrice/CAPM_discount)
 
 rfplot <- mean(LIBOR$Rate)  #use arithmetic mean, geometric compound better?
 #graph showing CAPM prediction for return of stock vs market and risk free rate
@@ -68,9 +68,8 @@ text(c(0,ibm_MonthVol,msci_MonthVol),c(rfplot,ibm_MonthRet,msci_MonthRet),
 abline(rfplot,(msci_MonthRet-rfplot)/msci_MonthVol,col="blue",lty="dotted")
 
 N <- nrow(ibm)-1 #number of periods, without last one- N/A returns
-NWeight <- 100 #precision for stock weight %, number of discrete steps
+NWeight <- 1000 #precision for stock weight %, number of discrete steps
 StockPct <- 0:NWeight/NWeight #vector for stock % in mixed portfolio
-ri_step <- 0.0001 #precision for stock return
 
 #Semivariance implementation
 #parameters: x - vector to calculate svar on, r - threshold
@@ -88,57 +87,47 @@ VAR5pct <- function(x,r=0.05) {
 
 #Matrix NWeightxlength(returns) with historical return of all mixed portfolios
 #Weighted returns for each period in columns, rows time series return for weight
-RetMat <- StockPct%*%t(ibm$Returns[1:N])+(1-StockPct)%*%t(MSCI$Returns[1:N])
-rownames(RetMat) <- paste("IBMpct",StockPct*100,sep='')
-colnames(RetMat) <- paste("Month",1:N,sep='')
+# RetMat <- StockPct%*%t(ibm$Returns[1:N])+(1-StockPct)%*%t(MSCI$Returns[1:N])
+# rownames(RetMat) <- paste("IBMpct",StockPct*100,sep='')
+# colnames(RetMat) <- paste("Month",1:N,sep='')
 
-#RTR function returns average stock return that has minimum % of stock in portfolio
-#which is optimized for Reward to Risk (RTR) function argument
-#Parameters: risk measure to use, expected returns and initial guess
-#RTR <- function(RiskFunc,Rm,Rf,PriceT,PriceGuess=0){
-RTR <- function(RiskFunc,Rm,Rf,RiGuess=0.5){
-   MinXi <- 1 #stock allocation in optimal portfolio, start with large 100%
-   #Ri: expected stock return that brings to minimum % of stock in optimal market+stock portfolio
-   Ri <- RiGuess*2 #start with high return guess, low price of stock
-   cap_pct <- 0.02 #percent of capitalization of stock out of total market index
-   while ((Ri > 0) && (MinXi > cap_pct)) { #stops when arrives at 0% allocation of stock (MinXi)
-    #Vector of length Nweight of returns of mixed portfolio for average expected return values
-    RetPortfolioVec <- StockPct*Ri+(1-StockPct)*Rm-Rf
-    #adapt stock return matrix to new average return of stock
-    RetMat <- StockPct%*%t((ibm$Returns[1:N]+1)*(1+Ri)/(1+ibm_MonthRet)-1) +
-             (1-StockPct)%*%t(MSCI$Returns[1:N])
-    rownames(RetMat) <- paste("IBMpct",StockPct*100,sep='')
-    colnames(RetMat) <- paste("Month",1:N,sep='')
-    #Vector of length Nweight of risk of mixed portfolio, summarize rows for each stock pct
-    RiskPortfolioVec <- apply(RetMat,1,RiskFunc)
-    #Vector of length Nweight of Reward to Risk of mixed portfolio
-    RTRPortfolio <- RetPortfolioVec/RiskPortfolioVec
-    MaxRTRXi <- StockPct[which.max(RTRPortfolio)] #use max RTR index to get stock %
-    if (MinXi > MaxRTRXi) {
-      MinXi <- MaxRTRXi
-      MinRi <- Ri
-    }
-    Ri <- Ri-ri_step
-  }
-   return(MinRi)
+DistMat <- data.frame(indxRet=MSCI$Returns[1:N],StockRet=ibm$Returns[1:N])
+#RTRMaxStockPct function returns stock % in portfolio that has max Reward to Risk
+#RTR optimized for Reward to Risk (RTR) function argument
+RTRMaxStockPct <- function(PriceGuess,RiskFunc,Rf,cap=0){
+  DistMat$Ret_i <- DistMat$StockPrices/PriceGuess-1      #derived returns
+  #Portfolio returns matrix with row for each stock % and columns for months
+  RetMat <- StockPct%*%t(DistMat$Ret_i)+(1-StockPct)%*%t(DistMat$indxRet)
+  RetPortfolioVec  <- apply(RetMat,1,mean)-Rf  #return mean per %stock - risk free
+  RiskPortfolioVec <- apply(RetMat,1,RiskFunc) #risk measure per %stock
+  RTRPortfolio <- RetPortfolioVec/RiskPortfolioVec #Reward to Risk per %stock
+  MaxRTRXi <- StockPct[which.max(RTRPortfolio)] #use max RTR index to get stock %
+  return(MaxRTRXi)
 }
+
+#define convex function that has 0 at the lowest non-zero stock pct resolution
+f <- function(x,...) {RTRMaxStockPct(x,...)-StockPct[2]}
+cap_pct <- 0 #percent of capitalization of stock out of total market index
 
 #Rprof()
+pb <- txtProgressBar(min=1,max=N,style=3)
 vartime <- system.time(
-for (j in 1:N) {
-  rf <- LIBOR$Rate[j]
-  var_discount  <- 1+RTR("sd",     msci_MonthRet,rf,ibm_MonthRet)
-  svar_discount <- 1+RTR("svar",   msci_MonthRet,rf,ibm_MonthRet)
-  VAR5_discount <- 1+RTR("VAR5pct",msci_MonthRet,rf,ibm_MonthRet)
-  #Current month price = naive next month predicted return discounted by risk measures
-  ibm[j,"VarPrice"]     <- ibm$PredictedNextPeriodPrice[j]/var_discount
-  ibm[j,"SVarPrice"]    <- ibm$PredictedNextPeriodPrice[j]/svar_discount
-  ibm[j,"VaR5pctPrice"] <- ibm$PredictedNextPeriodPrice[j]/VAR5_discount
-  ibm[j,"PredRetVar"]     <- var_discount-1
-  ibm[j,"PredRetSVar"]    <- svar_discount-1
-  ibm[j,"PredretVaR5pct"] <- VAR5_discount-1
-}
-)
+  for (j in 1:N) {
+    rf <- LIBOR$Rate[j]
+    cpr <- ibm[j,"Price"]                            #current price abbreviation
+    DistMat$StockPrices <- cpr*(1+DistMat$StockRet)  #expected prices
+    ibm[j,"VarPrice"]     <- uniroot(f,c(cpr/2,cpr*2),RiskFunc="pop.sd",Rf=rf,cap=cap_pct)$root
+    ibm[j,"SVarPrice"]    <- uniroot(f,c(cpr/2,cpr*2),RiskFunc="svar",Rf=rf,cap=cap_pct)$root
+    ibm[j,"VaR5pctPrice"] <- uniroot(f,c(cpr/2,cpr*2),RiskFunc="VAR5pct",Rf=rf,cap=cap_pct)$root
+# trying to debug why CAPM price not identical to VarPrice - BUG
+#     calcbeta <- cov(DistMat$StockPrices/cpr-1,MSCI$Returns[1:N])/
+#       var(DistMat$StockPrices/cpr-1)
+#     ibm[j,"CAPMPrice2"] <- mean(DistMat$StockPrices)/
+#       (1+rf+calcbeta*(mean(MSCI$Returns,na.rm=T)-rf))
+    setTxtProgressBar(pb,j)
+  }
+  ,gcFirst=T)
+close(pb)
 #Rprof(NULL)
 
 # TBD add regression between history average return and predicted return for different stocks and check R2
@@ -187,14 +176,3 @@ plotdat2 <- melt(pricesdat,id="Date",value.name="PlotPrice")
 ggplot(plotdat2,aes(x=Date,y=PlotPrice,colour=variable))+geom_line()+
   labs(y="Price difference")+
   ggtitle("Difference of different risk discount estimators from real price")
-
-
-#plot(x=colnames(Sharpe_mat),y=Sharpe_mat[MinXiPricei,],type="l",
-#     xlab="% market",ylab="Sharpe of portfolio",
-#     main=c("Portfolio Sharpe value vs % market for stock price of",MinXiPricei))
-#g_tmp <- ggplot(Sharpe_mat,aes(x=colnames(Sharpe_mat),y=Sharpe_mat[MinXi,]))
-
-#paste("Algorithm price",MinXiPricei)
-
-#diff_eq_price <- StockInitialPrice-MinXiPricei
-#diff_eq_price/StockInitialPrice

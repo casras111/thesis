@@ -34,6 +34,10 @@ grid.arrange(g1,g2,g3,nrow=3)
 #assume data sorted by latest date first
 ibm  <- mutate (ibm, Returns=Price/lead(Price)-1) 
 MSCI <- mutate (MSCI,Returns=Price/lead(Price)-1)
+N <- nrow(ibm)-1 #number of periods, without last one- N/A returns
+ibm <- ibm[1:N,] #remove oldest entry that has NA for returns
+MSCI <- MSCI[1:N,]
+LIBOR <- LIBOR[1:N,]
 
 ggplot(data.frame(msci=MSCI$Return,ibm=ibm$Return))+
   geom_density(aes(x=msci),fill="grey",alpha=0.5)+
@@ -67,7 +71,7 @@ text(c(0,ibm_MonthVol,msci_MonthVol),c(rfplot,ibm_MonthRet,msci_MonthRet),
     c("rf","IBM","MSCI"),pos=3,cex=0.7)
 abline(rfplot,(msci_MonthRet-rfplot)/msci_MonthVol,col="blue",lty="dotted")
 
-N <- nrow(ibm)-1 #number of periods, without last one- N/A returns
+
 NWeight <- 1000 #precision for stock weight %, number of discrete steps
 StockPct <- 0:NWeight/NWeight #vector for stock % in mixed portfolio
 
@@ -75,6 +79,12 @@ StockPct <- 0:NWeight/NWeight #vector for stock % in mixed portfolio
 #parameters: x - vector to calculate svar on, r - threshold
 svar <- function(x,r=rf) {
   sum(pmin(x-r,0,na.rm=TRUE)^2)/(length(x)-1) #need to fix n for NA?
+}
+
+#semivariance implementation with division by number of returns below only
+svar_n <- function(x,r=rf) {
+  x_below <- x[x<r]-r
+  sum(x_below^2)/(length(x_below)-1)
 }
 
 #VAR implementation
@@ -85,6 +95,21 @@ VAR5pct <- function(x,r=0.05) {
   return(r5)
 }
 
+VAR10pct <- function(x,r=0.1) {
+  r5 <- quantile(x,r,names=F)
+  if (r5 < 0) {r5 <- (-1)*r5} else r5 <- 0 #NA for positive
+  return(r5)
+}
+
+VAR20pct <- function(x,r=0.2) {
+  r5 <- quantile(x,r,names=F)
+  if (r5 < 0) {r5 <- (-1)*r5} else r5 <- 0 #NA for positive
+  return(r5)
+}
+
+#implement population sd for testing - without n-1
+pop.sd <- function (x) {return(sqrt(sum((x-mean(x))^2)/length(x)))}
+
 #Matrix NWeightxlength(returns) with historical return of all mixed portfolios
 #Weighted returns for each period in columns, rows time series return for weight
 # RetMat <- StockPct%*%t(ibm$Returns[1:N])+(1-StockPct)%*%t(MSCI$Returns[1:N])
@@ -92,6 +117,12 @@ VAR5pct <- function(x,r=0.05) {
 # colnames(RetMat) <- paste("Month",1:N,sep='')
 
 DistMat <- data.frame(indxRet=MSCI$Returns[1:N],StockRet=ibm$Returns[1:N])
+
+#check autocorrelation in time series
+pacf(DistMat$StockRet,plot=T,lag.max=12)
+pacf(DistMat$indxRet,plot=T,lag.max=12)
+
+
 #RTRMaxStockPct function returns stock % in portfolio that has max Reward to Risk
 #RTR optimized for Reward to Risk (RTR) function argument
 RTRMaxStockPct <- function(PriceGuess,RiskFunc,Rf,cap=0){
@@ -112,10 +143,11 @@ cap_pct <- 0 #percent of capitalization of stock out of total market index
 #Rprof()
 pb <- txtProgressBar(min=1,max=N,style=3)
 vartime <- system.time(
-  for (j in 1:N) {
+  #for (j in 1:N) {
+for (j in 1:1) {  #for testing only last period
     rf <- LIBOR$Rate[j]
     cpr <- ibm[j,"Price"]                            #current price abbreviation
-    DistMat$StockPrices <- cpr*(1+DistMat$StockRet)  #expected prices
+    DistMat$StockPrices <- cpr*(1+DistMat$StockRet)  #distribution of expected prices
     ibm[j,"VarPrice"]     <- uniroot(f,c(cpr/2,cpr*2),RiskFunc="pop.sd",Rf=rf,cap=cap_pct)$root
     ibm[j,"SVarPrice"]    <- uniroot(f,c(cpr/2,cpr*2),RiskFunc="svar",Rf=rf,cap=cap_pct)$root
     ibm[j,"VaR5pctPrice"] <- uniroot(f,c(cpr/2,cpr*2),RiskFunc="VAR5pct",Rf=rf,cap=cap_pct)$root

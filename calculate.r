@@ -110,53 +110,70 @@ VAR20pct <- function(x,r=0.2) {
 #implement population sd for testing - without n-1
 pop.sd <- function (x) {return(sqrt(sum((x-mean(x))^2)/length(x)))}
 
-#Matrix NWeightxlength(returns) with historical return of all mixed portfolios
-#Weighted returns for each period in columns, rows time series return for weight
-# RetMat <- StockPct%*%t(ibm$Returns[1:N])+(1-StockPct)%*%t(MSCI$Returns[1:N])
-# rownames(RetMat) <- paste("IBMpct",StockPct*100,sep='')
-# colnames(RetMat) <- paste("Month",1:N,sep='')
-
 DistMat <- data.frame(indxRet=MSCI$Returns[1:N],StockRet=ibm$Returns[1:N])
 
 #check autocorrelation in time series
 pacf(DistMat$StockRet,plot=T,lag.max=12)
 pacf(DistMat$indxRet,plot=T,lag.max=12)
 
-
 #RTRMaxStockPct function returns stock % in portfolio that has max Reward to Risk
 #RTR optimized for Reward to Risk (RTR) function argument
-RTRMaxStockPct <- function(PriceGuess,RiskFunc,Rf,cap=0){
-  DistMat$Ret_i <- DistMat$StockPrices/PriceGuess-1      #derived returns
-  #Portfolio returns matrix with row for each stock % and columns for months
-  RetMat <- StockPct%*%t(DistMat$Ret_i)+(1-StockPct)%*%t(DistMat$indxRet)
-  RetPortfolioVec  <- apply(RetMat,1,mean)-Rf  #return mean per %stock - risk free
-  RiskPortfolioVec <- apply(RetMat,1,RiskFunc) #risk measure per %stock
-  RTRPortfolio <- RetPortfolioVec/RiskPortfolioVec #Reward to Risk per %stock
-  MaxRTRXi <- StockPct[which.max(RTRPortfolio)] #use max RTR index to get stock %
-  return(MaxRTRXi)
+# RTRMaxStockPct <- function(PriceGuess,RiskFunc,Rf,cap=0){
+#   DistMat$Ret_i <- DistMat$StockPrices/PriceGuess-1      #derived returns
+#   #Portfolio returns matrix with row for each stock % and columns for months
+#   RetMat <- StockPct%*%t(DistMat$Ret_i)+(1-StockPct)%*%t(DistMat$indxRet)
+#   RetPortfolioVec  <- apply(RetMat,1,mean)-Rf  #return mean per %stock - risk free
+#   RiskPortfolioVec <- apply(RetMat,1,RiskFunc) #risk measure per %stock
+#   RTRPortfolio <- RetPortfolioVec/RiskPortfolioVec #Reward to Risk per %stock
+#   MaxRTRXi <- StockPct[which.max(RTRPortfolio)] #use max RTR index to get stock %
+#   return(MaxRTRXi)
+# }
+
+#calculate reward to risk ratio of stock+index portfolio for different risk functions
+#from assumed probability distribution of returns DistMat and assumed price PriceGuess
+RTR <- function(StockWeight,PriceGuess,RiskFunc,Rf){
+  DistMat$Ret_i <- DistMat$StockPrices/PriceGuess-1  #derived returns
+  #Portfolio returns vector
+  RetVec <- StockWeight*DistMat$Ret_i+(1-StockWeight)*DistMat$indxRet
+  RetPortfolio <- mean(RetVec)-Rf                     #return mean - risk free
+  RiskPortfolio <- do.call(RiskFunc,list(x=RetVec))   #risk measure
+  RiskPortfolio <- RiskPortfolio^(sign(RetPortfolio)) #Israelsen correction for negative rets
+  RTRPortfolio <- ifelse(RiskPortfolio==0,
+                         .Machine$integer.max,        #for zero svar positive only returns
+                         RetPortfolio/RiskPortfolio)  #Reward to Risk
+  return(RTRPortfolio)
 }
 
+#calculate percent of stock in stock+index portfolio with maximum RTR
+#for given stock price and risk function using RTR function
+RTRpctmax <- function(PriceGuess,RiskFunc,Rf) {
+  pctmax <- optimize(RTR,c(0,1),PriceGuess=PriceGuess,            #optimize stock% between 0-1
+                  RiskFunc=RiskFunc,Rf=Rf,maximum=TRUE,tol=1e-9)$maximum
+  return(pctmax)
+}
+
+cap_pct <- 0.000001 #percent of capitalization of stock out of total market index
 #define convex function that has 0 at the lowest non-zero stock pct resolution
-f <- function(x,...) {RTRMaxStockPct(x,...)-StockPct[2]}
-cap_pct <- 0 #percent of capitalization of stock out of total market index
+#f <- function(x,...) {RTRMaxStockPct(x,...)-cap_pct}
+f <- function(x,...) {RTRpctmax(x,...)-cap_pct}
 
 #Rprof()
 pb <- txtProgressBar(min=1,max=N,style=3)
 vartime <- system.time(
-  #for (j in 1:N) {
-for (j in 1:1) {  #for testing only last period
+  for (j in 1:N) {
+#for (j in 1:1) {  #for testing only last period
+    setTxtProgressBar(pb,j)
     rf <- LIBOR$Rate[j]
     cpr <- ibm[j,"Price"]                            #current price abbreviation
     DistMat$StockPrices <- cpr*(1+DistMat$StockRet)  #distribution of expected prices
-    ibm[j,"VarPrice"]     <- uniroot(f,c(cpr/2,cpr*2),RiskFunc="pop.sd",Rf=rf,cap=cap_pct)$root
-    ibm[j,"SVarPrice"]    <- uniroot(f,c(cpr/2,cpr*2),RiskFunc="svar",Rf=rf,cap=cap_pct)$root
-    ibm[j,"VaR5pctPrice"] <- uniroot(f,c(cpr/2,cpr*2),RiskFunc="VAR5pct",Rf=rf,cap=cap_pct)$root
+    ibm[j,"VarPrice"]     <- uniroot(f,c(cpr/2,cpr*2),RiskFunc="pop.sd",Rf=rf)$root
+    ibm[j,"SVarPrice"]    <- uniroot(f,c(cpr/2,cpr*2),RiskFunc="svar",Rf=rf)$root
+    ibm[j,"VaR5pctPrice"] <- uniroot(f,c(cpr/2,cpr*2),RiskFunc="VAR5pct",Rf=rf)$root
 # trying to debug why CAPM price not identical to VarPrice - BUG
 #     calcbeta <- cov(DistMat$StockPrices/cpr-1,MSCI$Returns[1:N])/
 #       var(DistMat$StockPrices/cpr-1)
 #     ibm[j,"CAPMPrice2"] <- mean(DistMat$StockPrices)/
 #       (1+rf+calcbeta*(mean(MSCI$Returns,na.rm=T)-rf))
-    setTxtProgressBar(pb,j)
   }
   ,gcFirst=T)
 close(pb)

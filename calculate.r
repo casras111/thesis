@@ -1,79 +1,112 @@
 library(ggplot2)
-library(dplyr)
 library(reshape2)
 library(gridExtra)
 library(utils)
+library(quantmod)
+
+#constant defining how many months of history to use, 120 for 10y
+n_window <- 120
 
 # Load data from disk: stock, LIBOR interest rate and MSCI global index
-ipath <- file.path("../DataRaw","ibm_10y.csv")
-ibm <- read.csv(ipath, colClasses = c("Date","numeric"))
-lpath <- file.path("../DataWork","LIBOR.csv")
-LIBOR <- read.csv(lpath, colClasses = c("Date","numeric"))
-mpath <- file.path("../DataWork","MSCI.csv")
-MSCI <- read.csv(mpath, colClasses = c("Date","numeric"))
+load("../DataWork/Stocks.Rdata")
+load("../DataWork/LIBOR.Rdata")
+load("../DataWork/MSCI.Rdata")
 
-LIBOR$Rate <- LIBOR$Rate/12/100 #transform to monthly percent
+N <- dim(LIBOR)[1] #number of periods assumed consistent for all data structures
 
-dat <- cbind(LIBOR,MSCI$Price,ibm$Price)
-names(dat) <- c("Date","LIBOR","MSCI","IBM")
-norm_col <- function(x) x/x[length(x)]  #divide by last entry, oldest
-plotdat <- mutate_each(select(dat,Date,MSCI,IBM),funs(norm_col),MSCI,IBM)
-plotdat <- melt(plotdat,id="Date",value.name = "Price")
-ggplot(plotdat,aes(x=Date,y=Price,colour=variable))+geom_line()+
-  ggtitle("MSCI vs IBM scaled returns")
+#################### Data structures #############################
+# Stocks, LIBOR, MSCI xts objects with prices for the 20y period #
+# dat - merged xts object of Stocks, LIBOR, MSCI                 #
+# dat.ret - monthly return xts object - used for plotting        #
+# DistMat - distribution matrix of 10y stock+index returns       #
+#           used as probability proxy for each stock             #
+#           from current price create stock expected prices dist #
+#           and for each PriceGuess generate stock returns for   #
+#           use in RTR reward to risk maximization               #
+# StocksList - list of xts objects for each stock with actual    #
+#              monthly price and estimated prices for each risk  #
+#              discount factor                                   #
+##################################################################
 
-g1 <- ggplot(ibm,aes(x=Date,y=Price))+geom_line()+labs(x="Date",y="Price")+
+LIBOR <- LIBOR/12/100 #transform to monthly percent
+dat <- merge(LIBOR,MSCI,Stocks)
+
+norm_col <- function(x) x/x[1]  #divide by first entry, oldest
+#removing Apple from plot, 1000% stock return in 20y
+rm_cols <- which(colnames(dat) %in% c("LIBOR","AAPL"))
+plotdat <- as.data.frame(apply(dat[,-rm_cols],2,norm_col))
+plotdat.xts <- apply(dat[,-rm_cols],2,norm_col)
+plotdat$Date <- index(dat)
+plotdat <- melt(plotdat,id="Date",value.name = "NormalizedPrice")
+ggplot(plotdat,aes(x=Date,y=NormalizedPrice,colour=variable))+geom_line()+
+  ggtitle("MSCI vs Stocks scaled returns")
+
+#graph with index,ibm and libor each in a separate row
+plotdat2 <- data.frame(Date=index(dat),coredata(dat))
+g1 <- ggplot(plotdat2,aes(x=Date,y=IBM))+geom_line()+labs(x="Date",y="Price")+
   ggtitle("IBM stock price")
-g2 <- ggplot(MSCI,aes(x=Date,y=Price))+geom_line()+labs(x="Date",y="Price")+
+g2 <- ggplot(plotdat2,aes(x=Date,y=MSCI))+geom_line()+labs(x="Date",y="Price")+
   ggtitle("MSCI index price")
-g3 <- ggplot(LIBOR,aes(x=Date,y=Rate))+geom_line()+labs(x="Date",y="Rate")+
+g3 <- ggplot(plotdat2,aes(x=Date,y=LIBOR))+geom_line()+labs(x="Date",y="Rate")+
   ggtitle("LIBOR rate")
 grid.arrange(g1,g2,g3,nrow=3)
 
-# calculate returns, stddev, correlations and statistic co-distribution
-#assume data sorted by latest date first
-ibm  <- mutate (ibm, Returns=Price/lead(Price)-1) 
-MSCI <- mutate (MSCI,Returns=Price/lead(Price)-1)
-N <- nrow(ibm)-1 #number of periods, without last one- N/A returns
-ibm <- ibm[1:N,] #remove oldest entry that has NA for returns
-MSCI <- MSCI[1:N,]
-LIBOR <- LIBOR[1:N,]
+dat.ret <- ROC(dat,type="discrete",na.pad=F) #returns calculation
 
-ggplot(data.frame(msci=MSCI$Return,ibm=ibm$Return))+
-  geom_density(aes(x=msci),fill="grey",alpha=0.5)+
-  geom_density(aes(x=ibm),fill="blue",alpha=0.2) +ggtitle("Returns distributions")
+ggplot(data.frame(coredata(dat.ret$MSCI),coredata(dat.ret$IBM)))+
+  geom_density(aes(x=MSCI),fill="grey",alpha=0.5)+
+  geom_density(aes(x=IBM),fill="blue",alpha=0.2) +ggtitle("Returns distributions")
 
-ggplot(data.frame(msci=MSCI$Return,ibm=ibm$Return),aes(x=msci,y=ibm))+geom_point()+
-  ggtitle("Returns distributions")
+ggplot(data.frame(coredata(dat.ret$MSCI),coredata(dat.ret$IBM)),
+       aes(x=MSCI,y=IBM))+geom_point()+ggtitle("Returns distributions")
 
-ibm_MonthVol  <- sd(ibm$Returns,na.rm=TRUE)
-msci_MonthVol <- sd(MSCI$Returns,na.rm=TRUE)
+colnames(LIBOR) <- "Rate"
+colnames(MSCI)  <- "Price"
+MSCI$Return <- ROC(MSCI$Price,type="discrete",na.pad=F) #Rate of change, return %
+MSCI$AvgRet <- rollapply(MSCI$Return,FUN=mean,width=n_window)
+MSCI$SD     <- rollapply(MSCI$Return,FUN=sd,  width=n_window)
 
-ibm_MonthRet  <- mean(ibm$Returns,na.rm=TRUE)
-msci_MonthRet <- mean(MSCI$Returns,na.rm=TRUE)
+stocknames <- colnames(Stocks)
+#create list of stocks where each xts object has price,return,sd...
+StocksList <- vector("list",length(stocknames))
+names(StocksList) <- stocknames
+for (i in seq_along(stocknames)) {
+  StocksList[[i]] <- Stocks[,i]
+  names(StocksList[[i]]) <- "Price"
+  #arithmetic return (Rate of Change) calculation for each month
+  StocksList[[i]]$Return <- ROC(StocksList[[i]]$Price,type="discrete",na.pad=F)
+  #moving average (rolling) for n_window back history
+  StocksList[[i]]$AvgRet <- rollapply(StocksList[[i]]$Return,FUN=mean,width=n_window)
+  #standard deviation (cumulative rolling) for n_window back history
+  StocksList[[i]]$SD <- rollapply(StocksList[[i]]$Return,FUN=sd,width=n_window)
+  #Next period price predict based on average return known
+  StocksList[[i]]$PredictNextPrice <- StocksList[[i]]$Price*(1+StocksList[[i]]$AvgRet)
+  #Price taking into account CAPM risk
+  cov_stock_index <- runCov(StocksList[[i]]$Return,MSCI$Return,n=n_window)
+  #alternative cov calculation using rollapply
+  #rollapply(merge(StocksList[[i]]$Return,MSCI$Return),
+  #           FUN=function(x) {cov(x[,1],x[,2])},width=n_window,by.column = F)
+  beta_stock <- cov_stock_index/(StocksList[[i]]$SD^2)
+  CAPM_discount <- 1+LIBOR$Rate+beta_stock*(MSCI$AvgRet-LIBOR$Rate)
+  StocksList[[i]]$CAPMPrice <- StocksList[[i]]$PredictNextPrice/CAPM_discount
+}
 
-#previous risk free from annual interest 10y Treasury bills yield
-#source http://www.treasury.gov/resource-center/data-chart-center/interest-rates/Pages/TextView.aspx?data=yieldYear&year=2005
-
-#Expected next period price, mean return forward estimation
-ibm <- mutate(ibm,PredictNextPrice=Price*(1+ibm_MonthRet))
-#Price taking into account CAPM risk
-cov_ibm_msci <- cov(ibm$Returns,MSCI$Returns,use="complete.obs")
-beta_ibm <- cov_ibm_msci/(ibm_MonthVol^2)
-CAPM_discount <- 1+LIBOR$Rate+beta_ibm*(msci_MonthRet-LIBOR$Rate)
-ibm <- mutate (ibm, CAPMPrice=PredictNextPrice/CAPM_discount)
-
-rfplot <- mean(LIBOR$Rate)  #use arithmetic mean, geometric compound better?
 #graph showing CAPM prediction for return of stock vs market and risk free rate
-plot(c(0,ibm_MonthVol,msci_MonthVol),c(rfplot,ibm_MonthRet,msci_MonthRet),
-    xlab="Monthly Standard Deviation",ylab="Mean Monthly Return",ylim=c(0,0.01))
-text(c(0,ibm_MonthVol,msci_MonthVol),c(rfplot,ibm_MonthRet,msci_MonthRet),
-    c("rf","IBM","MSCI"),pos=3,cex=0.7)
-abline(rfplot,(msci_MonthRet-rfplot)/msci_MonthVol,col="blue",lty="dotted")
+sdplot <- 0 ; retplot <- coredata(last(LIBOR$Rate))
+for (i in seq_along(stocknames)) {
+  sdplot <- c(sdplot,as.numeric(last(StocksList[[i]]$SD)))
+  retplot <- c(retplot,as.numeric(last(StocksList[[i]]$AvgRet)))
+}
 
-
-NWeight <- 1000 #precision for stock weight %, number of discrete steps
-StockPct <- 0:NWeight/NWeight #vector for stock % in mixed portfolio
+plot(c(sdplot,last(MSCI$SD)),c(retplot,last(MSCI$AvgRet)),
+     xlab="Average Monthly Standard Deviation",ylab="Mean Monthly Return",
+     ylim=c(-0.012,0.025),xlim=c(0,0.2),
+     main="Stocks vs SML - Security market line")
+text(c(sdplot,last(MSCI$SD)),c(retplot,last(MSCI$AvgRet)),
+     c("RiskFree",stocknames,"MSCI"),pos=4,cex=0.6)
+abline(as.numeric(last(LIBOR$Rate)),
+       as.numeric((last(MSCI$AvgRet)-last(LIBOR$Rate))/last(MSCI$SD)),
+       col="blue",lty="dotted")
 
 #Semivariance implementation
 #parameters: x - vector to calculate svar on, r - threshold
@@ -110,31 +143,12 @@ VAR20pct <- function(x,r=0.2) {
 #implement population sd for testing - without n-1
 pop.sd <- function (x) {return(sqrt(sum((x-mean(x))^2)/length(x)))}
 
-DistMat <- data.frame(indxRet=MSCI$Returns[1:N],StockRet=ibm$Returns[1:N])
-
-#check autocorrelation in time series
-pacf(DistMat$StockRet,plot=T,lag.max=12)
-pacf(DistMat$indxRet,plot=T,lag.max=12)
-
-#RTRMaxStockPct function returns stock % in portfolio that has max Reward to Risk
-#RTR optimized for Reward to Risk (RTR) function argument
-# RTRMaxStockPct <- function(PriceGuess,RiskFunc,Rf,cap=0){
-#   DistMat$Ret_i <- DistMat$StockPrices/PriceGuess-1      #derived returns
-#   #Portfolio returns matrix with row for each stock % and columns for months
-#   RetMat <- StockPct%*%t(DistMat$Ret_i)+(1-StockPct)%*%t(DistMat$indxRet)
-#   RetPortfolioVec  <- apply(RetMat,1,mean)-Rf  #return mean per %stock - risk free
-#   RiskPortfolioVec <- apply(RetMat,1,RiskFunc) #risk measure per %stock
-#   RTRPortfolio <- RetPortfolioVec/RiskPortfolioVec #Reward to Risk per %stock
-#   MaxRTRXi <- StockPct[which.max(RTRPortfolio)] #use max RTR index to get stock %
-#   return(MaxRTRXi)
-# }
-
 #calculate reward to risk ratio of stock+index portfolio for different risk functions
 #from assumed probability distribution of returns DistMat and assumed price PriceGuess
 RTR <- function(StockWeight,PriceGuess,RiskFunc,Rf){
   DistMat$Ret_i <- DistMat$StockPrices/PriceGuess-1  #derived returns
   #Portfolio returns vector
-  RetVec <- StockWeight*DistMat$Ret_i+(1-StockWeight)*DistMat$indxRet
+  RetVec <- StockWeight*DistMat$Ret_i+(1-StockWeight)*DistMat$IndexRet
   RetPortfolio <- mean(RetVec)-Rf                     #return mean - risk free
   RiskPortfolio <- do.call(RiskFunc,list(x=RetVec))   #risk measure
   RiskPortfolio <- RiskPortfolio^(sign(RetPortfolio)) #Israelsen correction for negative rets
@@ -148,58 +162,57 @@ RTR <- function(StockWeight,PriceGuess,RiskFunc,Rf){
 #for given stock price and risk function using RTR function
 RTRpctmax <- function(PriceGuess,RiskFunc,Rf) {
   pctmax <- optimize(RTR,c(0,1),PriceGuess=PriceGuess,            #optimize stock% between 0-1
-                  RiskFunc=RiskFunc,Rf=Rf,maximum=TRUE,tol=1e-9)$maximum
+                     RiskFunc=RiskFunc,Rf=Rf,maximum=TRUE,tol=1e-9)$maximum
   return(pctmax)
 }
 
 cap_pct <- 0.000001 #percent of capitalization of stock out of total market index
 #define convex function that has 0 at the lowest non-zero stock pct resolution
-#f <- function(x,...) {RTRMaxStockPct(x,...)-cap_pct}
 f <- function(x,...) {RTRpctmax(x,...)-cap_pct}
 
-#Rprof()
-pb <- txtProgressBar(min=1,max=N,style=3)
+#Start calculations from first entry that incorporates full window used, no N/As
+calc_start <- N-n_window+1
+
 vartime <- system.time(
-  for (j in 1:N) {
-#for (j in 1:1) {  #for testing only last period
-    setTxtProgressBar(pb,j)
-    rf <- LIBOR$Rate[j]
-    cpr <- ibm[j,"Price"]                            #current price abbreviation
-    DistMat$StockPrices <- cpr*(1+DistMat$StockRet)  #distribution of expected prices
-    ibm[j,"VarPrice"]     <- uniroot(f,c(cpr/2,cpr*2),RiskFunc="pop.sd",Rf=rf)$root
-    ibm[j,"SVarPrice"]    <- uniroot(f,c(cpr/2,cpr*2),RiskFunc="svar",Rf=rf)$root
-    ibm[j,"VaR5pctPrice"] <- uniroot(f,c(cpr/2,cpr*2),RiskFunc="VAR5pct",Rf=rf)$root
-# trying to debug why CAPM price not identical to VarPrice - BUG
-#     calcbeta <- cov(DistMat$StockPrices/cpr-1,MSCI$Returns[1:N])/
-#       var(DistMat$StockPrices/cpr-1)
-#     ibm[j,"CAPMPrice2"] <- mean(DistMat$StockPrices)/
-#       (1+rf+calcbeta*(mean(MSCI$Returns,na.rm=T)-rf))
+  for (i in seq_along(stocknames)) {
+    StocksList[[i]]$VarPrice <-NA
+    StocksList[[i]]$SVarPrice <-NA
+    StocksList[[i]]$VAR5pctPrice <-NA
+    pb <- txtProgressBar(min=calc_start,max=N,style=3)
+    #TBD to change to rollapply for run time optimization, 2h current run time
+    for (j in calc_start:N) {
+      #for (j in N:N) {  #for testing only last period
+      setTxtProgressBar(pb,j)
+      rf <- as.numeric(LIBOR$Rate[j])
+      cpr <- as.numeric(StocksList[[i]][j,"Price"])                #current price abbreviation
+      DistMat <- merge(MSCI$Return,StocksList[[i]]$Return)[(j-n_window+1):j]
+      names(DistMat) <- c("IndexRet","StockRet")
+      DistMat$StockPrices <- cpr*(1+DistMat$StockRet)  #distribution of expected prices
+      StocksList[[i]][j,"VarPrice"]     <- uniroot(f,c(cpr/2,cpr*2),RiskFunc="pop.sd",Rf=rf)$root
+      StocksList[[i]][j,"SVarPrice"]    <- uniroot(f,c(cpr/2,cpr*2),RiskFunc="svar",Rf=rf)$root
+      StocksList[[i]][j,"VAR5pctPrice"] <- uniroot(f,c(cpr/2,cpr*2),RiskFunc="VAR5pct",Rf=rf)$root
+    }
+    close(pb)
   }
   ,gcFirst=T)
-close(pb)
-#Rprof(NULL)
+
+save(StocksList,file="../DataWork/StocksList.Rdata")
 
 # TBD add regression between history average return and predicted return for different stocks and check R2
 
-#sum of squares of the error for variance risk predict
-RMSE1 <- ibm %>% filter(!is.na(Returns)) %>% 
-  mutate(err = (Price-CAPMPrice)^2) %>% summarize(mse=sqrt(mean(err)))
-#sum of squares of the error for variance risk predict
-RMSE2 <- ibm %>% filter(!is.na(Returns)) %>% 
-  mutate(err = (Price-VarPrice)^2) %>% summarize(mse=sqrt(mean(err)))
-#sum of squares of the error for semivariance risk predict
-RMSE3 <- ibm %>% filter(!is.na(Returns)) %>% 
-  mutate(err = (Price-SVarPrice)^2) %>% summarize(mse=sqrt(mean(err)))
-#sum of squares of the error for VAR risk predict
-RMSE4 <- ibm %>% filter(!is.na(Returns)) %>% 
-  mutate(err = (Price-VaR5pctPrice)^2) %>% summarize(mse=sqrt(mean(err)))
-
-sprintf("CAPM RMSE %.5f, Variance RMSE %.5f, Semivariance RMSE %.5f, VAR at 5 pct %.5f",
-        RMSE1,RMSE2,RMSE3,RMSE4)
+for (i in seq_along(stocknames)) {
+  #sum of squares of the error for variance risk predict
+  RMSE1 <- with(StocksList[[i]][calc_start:N],sqrt(mean((Price-CAPMPrice)^2)))
+  RMSE2 <- with(StocksList[[i]][calc_start:N],sqrt(mean((Price-VarPrice)^2)))
+  RMSE3 <- with(StocksList[[i]][calc_start:N],sqrt(mean((Price-SVarPrice)^2)))
+  RMSE4 <- with(StocksList[[i]][calc_start:N],sqrt(mean((Price-VAR5pctPrice)^2)))
+  cat(sprintf("%-4s RMSE: CAPM %.4f, Variance %.4f, Semivariance %.4f, VAR5pct %.4f \n",
+              stocknames[i],RMSE1,RMSE2,RMSE3,RMSE4))
+}
 
 #Strategy of buy if VAR/SVAR price below market price,sell otherwise, discounted
 #not good check, always same profit if always buys
-# ibm <- ibm %>% 
+# ibm <- ibm %>%
 #   mutate (ProfitVAR =
 #             ifelse(lead(VarPrice)>lead(Adj.Close),
 #                    (Adj.Close-lead(Adj.Close)*(1+rf)),
@@ -213,15 +226,23 @@ sprintf("CAPM RMSE %.5f, Variance RMSE %.5f, Semivariance RMSE %.5f, VAR at 5 pc
 # sum(ibm$ProfitSVAR,na.rm=TRUE)
 #ibm %>% filter(!is.na(ProfitVAR)) %>% summarize(prVAR=sum(ProfitVAR))
 
-(head(ibm))
-
-plotdat2 <- melt(select(ibm,Date,Price,CAPMPrice,VarPrice,SVarPrice,VaR5pctPrice),
-                 id="Date",value.name="PlotPrice")
-ggplot(plotdat2,aes(x=Date,y=PlotPrice,colour=variable))+geom_line()+
-  ggtitle("Actual price compared to risk discount estimated prices")
-pricesdat <- select(ibm,Date,Price,CAPMPrice,VarPrice,SVarPrice,VaR5pctPrice)
-pricesdat[,-1] <- pricesdat[,-1]-pricesdat$Price
-plotdat2 <- melt(pricesdat,id="Date",value.name="PlotPrice")
-ggplot(plotdat2,aes(x=Date,y=PlotPrice,colour=variable))+geom_line()+
-  labs(y="Price difference")+
-  ggtitle("Difference of different risk discount estimators from real price")
+for (i in seq_along(stocknames)) {
+  plot.xts <- StocksList[[i]][calc_start:N,c("Price","CAPMPrice","VarPrice","SVarPrice","VAR5pctPrice")]
+  plot.df <- data.frame(coredata(plot.xts))
+  plot.df$Date <- index(plot.xts)
+  plotdat2 <- melt(plot.df,id="Date",value.name="PlotPrice")
+  title_string <- paste(stocknames[i],
+                        "Actual price Vs risk discount estimated prices")
+  g1<- ggplot(plotdat2,aes(x=Date,y=PlotPrice,colour=variable))+geom_line()+
+    ggtitle(title_string)
+  # print(g1) #not separate enough for visualizing differences
+  pricesdat <- plot.df[,-c(1,6)]-plot.df$Price
+  pricesdat$Date <- index(plot.xts)
+  plotdat2 <- melt(pricesdat,id="Date",value.name="PlotPrice")
+  title_string <- paste(stocknames[i],
+                        "Risk discount estimated prices vs real price")
+  g2 <- ggplot(plotdat2,aes(x=Date,y=PlotPrice,colour=variable))+geom_line()+
+    labs(y="Price error")+
+    ggtitle(title_string)
+  print(g2)
+}

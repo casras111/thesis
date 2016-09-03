@@ -1,66 +1,48 @@
-library(dplyr)
 library(xlsx)
-#library(ggplot2)
+library(quantmod)
 
-#### Read Yahoo stock monthly data  ###
+startDate <- "1996/1/1"
+endDate   <- "2015/12/31"
+period_filter <- paste0(substr(startDate,1,4),"::",substr(endDate,1,4))
+options("getSymbols.warning4.0"=FALSE)
 
-# Read only adjusted close column and date
-yahoo.read <- function(url){
-  dat <- read.table(url,header=TRUE,sep=",")
-  df <- dat[,c(1,7)]
-  df$Date <- as.Date(as.character(df$Date))
-  return(df)
+# Get stock data from Yahoo Finance, daily
+mysymbols <- c("IBM","AAPL","IHT","USEG","LNN")
+getSymbols(mysymbols,src="yahoo", auto.assign = T,from=startDate,to=endDate)
+s1 <- Ad(get(mysymbols[1])) #keep only Adjusted.Close
+Stocks <- s1
+for (i in 2:length(mysymbols)) {
+  Stocks <- merge.xts(Stocks,Ad(get(mysymbols[i])))
 }
-
-# Get IBM stock data from Yahoo Finance from 1/1/2005 to 1/1/2015, daily
-yahoourl <- "http://real-chart.finance.yahoo.com/table.csv?"
-dateurl <- "&a=00&b=01&c=2005&d=00&e=01&f=2015&g=d" #1/1/2005-1/1/2015, daily
-ibm_url   <- paste0(yahoourl,"s=IBM",dateurl)
-ibm  <- yahoo.read(ibm_url)
-names(ibm) <- c("Date","Price")
-ibm <- arrange(ibm,desc(Date)) #default for yahoo, added only for robustness
-#filter only for monthly data, end of month day
-ibm <- ibm %>% mutate(y=as.POSIXlt(Date)$year+1900,m=as.POSIXlt(Date)$mon+1)
-ibm <- ibm %>% group_by(y,m) %>% slice(1) %>% ungroup() %>% arrange(desc(Date))
-ibm <- select(ibm,Date,Price)
-
-write.csv(ibm,file="../DataRaw/ibm_10y.csv",row.names = F)
-
-#sp500_url <- "http://real-chart.finance.yahoo.com/table.csv?s=%5EGSPC&a=00&b=01&c=2005&d=00&e=01&f=2015&g=m&ignore=.csv"
-#sp500 <- yahoo.read(sp500_url)
-#write.csv(sp500,file="../DataRaw/sp500_10y.csv",row.names = F)
+colnames(Stocks) <- mysymbols
+Stocks <- Stocks[endpoints(Stocks,on="months"),] #only end of month prices
 
 ##### read LIBOR daily rates  ######
-lpath <- file.path("../DataRaw","LIBOR_1m_2005_2016.csv")
-LIBOR <- read.csv(file=lpath, stringsAsFactors = F)
-LIBOR[,1] <- as.Date(LIBOR[,1])
-LIBOR[,2] <- suppressWarnings(as.numeric(LIBOR[,2]))
-#remove NAs
-LIBOR <- LIBOR[!is.na(LIBOR[,2]),]
-names(LIBOR) <- c("Date","Rate")
-#keep only 2005 to 2015 and order dates in descending order
-LIBOR <- LIBOR %>% filter((Date >= "2005-01-01") & (Date < "2015-01-01")) %>% 
-                   arrange(desc(Date))
-#ggplot(LIBOR, aes(y=Rate,x=Date))+geom_line()
-
-#filter only for monthly data, end of month day
-LIBOR <- LIBOR %>% mutate(y=as.POSIXlt(Date)$year+1900,m=as.POSIXlt(Date)$mon+1)
-LIBOR <- LIBOR %>% group_by(y,m) %>% slice(1) %>% ungroup() %>% arrange(desc(Date))
-LIBOR <- select(LIBOR,Date,Rate)
-
-write.csv(LIBOR,file="../DataWork/LIBOR.csv",row.names = F)
+getSymbols("USD1MTD156N",src="FRED",auto.assign = T,from=startDate,to=endDate)
+LIBOR <- na.locf(USD1MTD156N)
+LIBOR <- LIBOR[endpoints(LIBOR,on="months"),] #keep only end of month
+colnames(LIBOR) <- "LIBOR"
+LIBOR <- LIBOR[period_filter]
 
 ##### read MSCI index monthly prices  ######
-
 mpath <- file.path("../DataRaw","MSCI_ACWI.xls")
 MSCI <- read.xlsx(file=mpath,sheetIndex=1,startRow = 7,endRow = 346)
-names(MSCI) <- c("Date","Price")
-#keep only 2005 to 2015 and order dates in descending order
-MSCI <- MSCI %>% filter((Date >= "2005-01-01") & (Date < "2015-01-01")) %>% 
-  arrange(desc(Date))
-#ggplot(MSCI, aes(y=Price,x=Date))+geom_line()
-write.csv(MSCI,file="../DataWork/MSCI.csv",row.names = F)
+MSCI <- xts(MSCI[,2],MSCI$Date)
+colnames(MSCI) <- "MSCI"
+MSCI <- MSCI[period_filter]
 
-#dates for end of month do not match exactly, 1 and 3 day lag for ibm vs msci
-filter(cbind(ibm=ibm,msci=MSCI,libor=LIBOR),(ibm.Date!=msci.Date)|(ibm.Date!=libor.Date))
+#dates for end of month do not match exactly, 1 and 3 day lag for stocks vs msci
+#Fix by changing end of month dates in MSCI and LIBOR to match Stocks dates
+#Introduces possible error of 1-3 days in 5 entries for the 20 years checked
+#Error in 5/240 entries
+which(is.na(merge(MSCI,LIBOR,Stocks)$MSCI))
+which(index(MSCI)!=index(Stocks))
+mismatches <- which(index(MSCI)!=index(Stocks))
+index(MSCI)[mismatches]  <- index(Stocks)[mismatches]
+index(LIBOR)[mismatches] <- index(Stocks)[mismatches]
+which(is.na(merge(MSCI,LIBOR,Stocks)$MSCI))
 
+#Save Rdata variables for calculate module
+save(Stocks,file="../DataWork/Stocks.Rdata")
+save(LIBOR,file="../DataWork/LIBOR.Rdata")
+save(MSCI,file="../DataWork/MSCI.Rdata")

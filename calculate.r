@@ -11,6 +11,7 @@ n_window <- 120
 load("../DataWork/Stocks.Rdata")
 load("../DataWork/LIBOR.Rdata")
 load("../DataWork/MSCI.Rdata")
+load("../DataWork/cap_pct.Rdata")
 
 N <- dim(LIBOR)[1] #number of periods assumed consistent for all data structures
 
@@ -166,9 +167,9 @@ RTRpctmax <- function(PriceGuess,RiskFunc,Rf) {
   return(pctmax)
 }
 
-cap_pct <- 0.000001 #percent of capitalization of stock out of total market index
-#define convex function that has 0 at the lowest non-zero stock pct resolution
-f <- function(x,...) {RTRpctmax(x,...)-cap_pct}
+# cap_pct <- 0.000001 #percent of capitalization of stock out of total market index
+# #define convex function that has 0 at the lowest non-zero stock pct resolution
+# f <- function(x,...) {RTRpctmax(x,...)-cap_pct}
 
 #Start calculations from first entry that incorporates full window used, no N/As
 calc_start <- N-n_window+1
@@ -178,8 +179,10 @@ vartime <- system.time(
     StocksList[[i]]$VarPrice <-NA
     StocksList[[i]]$SVarPrice <-NA
     StocksList[[i]]$VAR5pctPrice <-NA
+    #define convex function that has 0 at the lowest non-zero stock pct resolution
+    f <- function(x,...) {RTRpctmax(x,...)-cap_pct[i]}
     pb <- txtProgressBar(min=calc_start,max=N,style=3)
-    #TBD to change to rollapply for run time optimization, 2h current run time
+    #TBD to change to rollapply for run time optimization, 1.5h current run time
     for (j in calc_start:N) {
       #for (j in N:N) {  #for testing only last period
       setTxtProgressBar(pb,j)

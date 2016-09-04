@@ -42,7 +42,13 @@ index(MSCI)[mismatches]  <- index(Stocks)[mismatches]
 index(LIBOR)[mismatches] <- index(Stocks)[mismatches]
 which(is.na(merge(MSCI,LIBOR,Stocks)$MSCI))
 
+indexcap <- 33500 #$33500 milliard MSCI ACWI
+cap <- c(152.5,580.5,0.02197,0.00887,0.77376)
+cap_pct <- cap/indexcap
+names(cap_pct) <- mysymbols
+
 #Save Rdata variables for calculate module
 save(Stocks,file="../DataWork/Stocks.Rdata")
 save(LIBOR,file="../DataWork/LIBOR.Rdata")
 save(MSCI,file="../DataWork/MSCI.Rdata")
+save(cap_pct,file="../DataWork/cap_pct.Rdata")

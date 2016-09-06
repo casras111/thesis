@@ -56,7 +56,8 @@ dat.ret <- ROC(dat,type="discrete",na.pad=F) #returns calculation
 
 ggplot(data.frame(coredata(dat.ret$MSCI),coredata(dat.ret$IBM)))+
   geom_density(aes(x=MSCI),fill="grey",alpha=0.5)+
-  geom_density(aes(x=IBM),fill="blue",alpha=0.2) +ggtitle("Returns distributions")
+  geom_density(aes(x=IBM),fill="blue",alpha=0.2) +
+  ggtitle("Returns distributions")
 
 ggplot(data.frame(coredata(dat.ret$MSCI),coredata(dat.ret$IBM)),
        aes(x=MSCI,y=IBM))+geom_point()+ggtitle("Returns distributions")
@@ -87,26 +88,27 @@ for (i in seq_along(stocknames)) {
   #alternative cov calculation using rollapply
   #rollapply(merge(StocksList[[i]]$Return,MSCI$Return),
   #           FUN=function(x) {cov(x[,1],x[,2])},width=n_window,by.column = F)
-  beta_stock <- cov_stock_index/(StocksList[[i]]$SD^2)
-  CAPM_discount <- 1+LIBOR$Rate+beta_stock*(MSCI$AvgRet-LIBOR$Rate)
+  StocksList[[i]]$Beta <- cov_stock_index/(StocksList[[i]]$SD^2)
+  CAPM_discount <- 1+LIBOR$Rate+StocksList[[i]]$Beta*(MSCI$AvgRet-LIBOR$Rate)
   StocksList[[i]]$CAPMPrice <- StocksList[[i]]$PredictNextPrice/CAPM_discount
 }
 
 #graph showing CAPM prediction for return of stock vs market and risk free rate
 sdplot <- 0 ; retplot <- coredata(last(LIBOR$Rate))
 for (i in seq_along(stocknames)) {
-  sdplot <- c(sdplot,as.numeric(last(StocksList[[i]]$SD)))
+  sdplot <- c(sdplot,as.numeric(last(StocksList[[i]]$Beta)))
   retplot <- c(retplot,as.numeric(last(StocksList[[i]]$AvgRet)))
 }
 
-plot(c(sdplot,last(MSCI$SD)),c(retplot,last(MSCI$AvgRet)),
-     xlab="Average Monthly Standard Deviation",ylab="Mean Monthly Return",
-     ylim=c(-0.012,0.025),xlim=c(0,0.2),
-     main="Stocks vs SML - Security market line")
-text(c(sdplot,last(MSCI$SD)),c(retplot,last(MSCI$AvgRet)),
-     c("RiskFree",stocknames,"MSCI"),pos=4,cex=0.6)
+plot(c(sdplot,1),c(retplot,last(MSCI$AvgRet)), #Index beta=1 by definition
+     xlab="Beta",ylab="Mean Monthly Return",
+     ylim=c(-0.012,0.03),
+     xlim=c(0,1.2),
+     main="Stocks on SML - Security market line")
+text(c(sdplot,1),c(retplot,last(MSCI$AvgRet)), #Index beta=1 by definition
+     c("Rf",stocknames,"MSCI"),pos=3,cex=0.6)
 abline(as.numeric(last(LIBOR$Rate)),
-       as.numeric((last(MSCI$AvgRet)-last(LIBOR$Rate))/last(MSCI$SD)),
+       as.numeric(last(MSCI$AvgRet)-last(LIBOR$Rate)),
        col="blue",lty="dotted")
 
 #Semivariance implementation

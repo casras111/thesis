@@ -148,7 +148,7 @@ pop.sd <- function (x) {return(sqrt(sum((x-mean(x))^2)/length(x)))}
 
 #calculate reward to risk ratio of stock+index portfolio for different risk functions
 #from assumed probability distribution of returns DistMat and assumed price PriceGuess
-RTR <- function(StockWeight,PriceGuess,RiskFunc,Rf){
+RTR <- function(StockWeight,PriceGuess,RiskFunc,Rf,DistMat){
   DistMat$Ret_i <- DistMat$StockPrices/PriceGuess-1  #derived returns
   #Portfolio returns vector
   RetVec <- StockWeight*DistMat$Ret_i+(1-StockWeight)*DistMat$IndexRet
@@ -163,9 +163,10 @@ RTR <- function(StockWeight,PriceGuess,RiskFunc,Rf){
 
 #calculate percent of stock in stock+index portfolio with maximum RTR
 #for given stock price and risk function using RTR function
-RTRpctmax <- function(PriceGuess,RiskFunc,Rf) {
+RTRpctmax <- function(PriceGuess,RiskFunc,Rf,DistMat) {
   pctmax <- optimize(RTR,c(0,1),PriceGuess=PriceGuess,            #optimize stock% between 0-1
-                     RiskFunc=RiskFunc,Rf=Rf,maximum=TRUE,tol=1e-9)$maximum
+                     RiskFunc=RiskFunc,Rf=Rf,DistMat=DistMat,
+                     maximum=TRUE,tol=1e-9)$maximum               #find max
   return(pctmax)
 }
 
@@ -175,27 +176,68 @@ RTRpctmax <- function(PriceGuess,RiskFunc,Rf) {
 
 #Start calculations from first entry that incorporates full window used, no N/As
 calc_start <- N-n_window+1
-
+stocknames <- stocknames[1] #for debug only first stock
 vartime <- system.time(
   for (i in seq_along(stocknames)) {
-    StocksList[[i]]$VarPrice <-NA
-    StocksList[[i]]$SVarPrice <-NA
+    StocksList[[i]]$VarPrice     <-NA
+    StocksList[[i]]$SVarPrice    <-NA
     StocksList[[i]]$VAR5pctPrice <-NA
+    StocksList[[i]]$BootVar      <-NA
+    StocksList[[i]]$BootVarCI5   <-NA
+    StocksList[[i]]$BootVarCI95  <-NA
+    StocksList[[i]]$BootSVar     <-NA
+    StocksList[[i]]$BootSVarCI5  <-NA
+    StocksList[[i]]$BootSVarCI95 <-NA
+    StocksList[[i]]$BootVAR      <-NA
+    StocksList[[i]]$BootVARCI5   <-NA
+    StocksList[[i]]$BootVARCI95  <-NA
     #define convex function that has 0 at the lowest non-zero stock pct resolution
     f <- function(x,...) {RTRpctmax(x,...)-cap_pct[i]}
     pb <- txtProgressBar(min=calc_start,max=N,style=3)
-    #TBD to change to rollapply for run time optimization, 1.5h current run time
-    for (j in calc_start:N) {
-      #for (j in N:N) {  #for testing only last period
+    #1.5h current run time without bootstrap
+    DistMatTotal <- merge(MSCI$Return,StocksList[[i]]$Return) #distribution matrix
+    names(DistMatTotal) <- c("IndexRet","StockRet")
+    #for (j in calc_start:N) {
+      for (j in N:N) {  #for testing only last period
       setTxtProgressBar(pb,j)
       rf <- as.numeric(LIBOR$Rate[j])
       cpr <- as.numeric(StocksList[[i]][j,"Price"])                #current price abbreviation
-      DistMat <- merge(MSCI$Return,StocksList[[i]]$Return)[(j-n_window+1):j]
-      names(DistMat) <- c("IndexRet","StockRet")
+      DistMat <- DistMatTotal[(j-n_window+1):j]
       DistMat$StockPrices <- cpr*(1+DistMat$StockRet)  #distribution of expected prices
-      StocksList[[i]][j,"VarPrice"]     <- uniroot(f,c(cpr/2,cpr*2),RiskFunc="pop.sd",Rf=rf)$root
-      StocksList[[i]][j,"SVarPrice"]    <- uniroot(f,c(cpr/2,cpr*2),RiskFunc="svar",Rf=rf)$root
-      StocksList[[i]][j,"VAR5pctPrice"] <- uniroot(f,c(cpr/2,cpr*2),RiskFunc="VAR5pct",Rf=rf)$root
+      DistMat <- DistMat[,c("IndexRet","StockPrices")]
+      StocksList[[i]][j,"VarPrice"]     <- uniroot(f,c(cpr/2,cpr*2),RiskFunc="pop.sd",
+                                                   Rf=rf,DistMat=DistMat)$root
+      StocksList[[i]][j,"SVarPrice"]    <- uniroot(f,c(cpr/2,cpr*2),RiskFunc="svar",
+                                                   Rf=rf,DistMat=DistMat)$root
+      StocksList[[i]][j,"VAR5pctPrice"] <- uniroot(f,c(cpr/2,cpr*2),RiskFunc="VAR5pct",
+                                                   Rf=rf,DistMat=DistMat)$root
+      if (j==N) {
+        bootN <- 1000
+        VarPrice_vec  <- rep(0,bootN)
+        SVarPrice_vec <- rep(0,bootN)
+        VARPrice_vec  <- rep(0,bootN)
+        for (q in 1:bootN) {
+          DistMatSample <- DistMat[sample(n_window,replace=T)]        #bootstrap samples
+          VarPrice_vec[q] <- uniroot(f,c(cpr/2,cpr*2),RiskFunc="pop.sd",
+                                  Rf=rf,DistMat=DistMatSample)$root
+          SVarPrice_vec[q] <- uniroot(f,c(cpr/2,cpr*2),RiskFunc="svar",
+                                     Rf=rf,DistMat=DistMatSample)$root
+          VARPrice_vec[q] <- uniroot(f,c(cpr/2,cpr*2),RiskFunc="VAR5pct",
+                                                                                                 Rf=rf,DistMat=DistMatSample)$root
+        }
+        hist(VarPrice_vec)
+        StocksList[[i]][j,"BootVar"] <- mean(VarPrice_vec)
+        StocksList[[i]][j,"BootVarCI5"] <- quantile(VarPrice_vec,0.05)
+        StocksList[[i]][j,"BootVarCI95"] <- quantile(VarPrice_vec,0.95)
+        hist(SVarPrice_vec)
+        StocksList[[i]][j,"BootSVar"] <- mean(SVarPrice_vec)
+        StocksList[[i]][j,"BootSVarCI5"] <- quantile(SVarPrice_vec,0.05)
+        StocksList[[i]][j,"BootSVarCI95"] <- quantile(SVarPrice_vec,0.95)
+        hist(VARPrice_vec)
+        StocksList[[i]][j,"BootVAR"] <- mean(VARPrice_vec)
+        StocksList[[i]][j,"BootVARCI5"] <- quantile(VARPrice_vec,0.05)
+        StocksList[[i]][j,"BootVARCI95"] <- quantile(VARPrice_vec,0.95)
+      }
     }
     close(pb)
   }

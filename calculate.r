@@ -6,18 +6,19 @@ library(quantmod)
 
 #constant defining how many months of history to use, 120 for 10y
 n_window <- 120
+run_bootstrap=FALSE
 
-# Load data from disk: stock, LIBOR interest rate and MSCI global index
+# Load data from disk: stock, LIBOR interest rate and SP500 global index
 load("../DataWork/Stocks.Rdata")
 load("../DataWork/LIBOR.Rdata")
-load("../DataWork/MSCI.Rdata")
+load("../DataWork/SP500.Rdata")
 load("../DataWork/cap_pct.Rdata")
 
 N <- dim(LIBOR)[1] #number of periods assumed consistent for all data structures
 
 #################### Data structures #############################
-# Stocks, LIBOR, MSCI xts objects with prices for the 20y period #
-# dat - merged xts object of Stocks, LIBOR, MSCI                 #
+# Stocks, LIBOR, SP500 xts objects with prices for the 20y period #
+# dat - merged xts object of Stocks, LIBOR, SP500                 #
 # dat.ret - monthly return xts object - used for plotting        #
 # DistMat - distribution matrix of 10y stock+index returns       #
 #           used as probability proxy for each stock             #
@@ -30,7 +31,7 @@ N <- dim(LIBOR)[1] #number of periods assumed consistent for all data structures
 ##################################################################
 
 LIBOR <- LIBOR/12/100 #transform to monthly percent
-dat <- merge(LIBOR,MSCI,Stocks)
+dat <- merge(LIBOR,SP500,Stocks)
 
 norm_col <- function(x) x/x[1]  #divide by first entry, oldest
 #removing Apple from plot, 1000% stock return in 20y
@@ -40,33 +41,33 @@ plotdat.xts <- apply(dat[,-rm_cols],2,norm_col)
 plotdat$Date <- index(dat)
 plotdat <- melt(plotdat,id="Date",value.name = "NormalizedPrice")
 ggplot(plotdat,aes(x=Date,y=NormalizedPrice,colour=variable))+geom_line()+
-  ggtitle("MSCI vs Stocks scaled returns")
+  ggtitle("SP500 vs Stocks scaled returns")
 
 #graph with index,ibm and libor each in a separate row
 plotdat2 <- data.frame(Date=index(dat),coredata(dat))
 g1 <- ggplot(plotdat2,aes(x=Date,y=IBM))+geom_line()+labs(x="Date",y="Price")+
   ggtitle("IBM stock price")
-g2 <- ggplot(plotdat2,aes(x=Date,y=MSCI))+geom_line()+labs(x="Date",y="Price")+
-  ggtitle("MSCI index price")
+g2 <- ggplot(plotdat2,aes(x=Date,y=SP500))+geom_line()+labs(x="Date",y="Price")+
+  ggtitle("SP500 index price")
 g3 <- ggplot(plotdat2,aes(x=Date,y=LIBOR))+geom_line()+labs(x="Date",y="Rate")+
   ggtitle("LIBOR rate")
 grid.arrange(g1,g2,g3,nrow=3)
 
 dat.ret <- ROC(dat,type="discrete",na.pad=F) #returns calculation
 
-ggplot(data.frame(coredata(dat.ret$MSCI),coredata(dat.ret$IBM)))+
-  geom_density(aes(x=MSCI),fill="grey",alpha=0.5)+
+ggplot(data.frame(coredata(dat.ret$SP500),coredata(dat.ret$IBM)))+
+  geom_density(aes(x=SP500),fill="grey",alpha=0.5)+
   geom_density(aes(x=IBM),fill="blue",alpha=0.2) +
   ggtitle("Returns distributions")
 
-ggplot(data.frame(coredata(dat.ret$MSCI),coredata(dat.ret$IBM)),
-       aes(x=MSCI,y=IBM))+geom_point()+ggtitle("Returns distributions")
+ggplot(data.frame(coredata(dat.ret$SP500),coredata(dat.ret$IBM)),
+       aes(x=SP500,y=IBM))+geom_point()+ggtitle("Returns distributions")
 
 colnames(LIBOR) <- "Rate"
-colnames(MSCI)  <- "Price"
-MSCI$Return <- ROC(MSCI$Price,type="discrete",na.pad=F) #Rate of change, return %
-MSCI$AvgRet <- rollapply(MSCI$Return,FUN=mean,width=n_window)
-MSCI$SD     <- rollapply(MSCI$Return,FUN=sd,  width=n_window)
+colnames(SP500)  <- "Price"
+SP500$Return <- ROC(SP500$Price,type="discrete",na.pad=F) #Rate of change, return %
+SP500$AvgRet <- rollapply(SP500$Return,FUN=mean,width=n_window)
+SP500$SD     <- rollapply(SP500$Return,FUN=sd,  width=n_window)
 
 stocknames <- colnames(Stocks)
 #create list of stocks where each xts object has price,return,sd...
@@ -84,12 +85,12 @@ for (i in seq_along(stocknames)) {
   #Next period price predict based on average return known
   StocksList[[i]]$PredictNextPrice <- StocksList[[i]]$Price*(1+StocksList[[i]]$AvgRet)
   #Price taking into account CAPM risk
-  cov_stock_index <- runCov(StocksList[[i]]$Return,MSCI$Return,n=n_window)
+  cov_stock_index <- runCov(StocksList[[i]]$Return,SP500$Return,n=n_window)
   #alternative cov calculation using rollapply
-  #rollapply(merge(StocksList[[i]]$Return,MSCI$Return),
+  #rollapply(merge(StocksList[[i]]$Return,SP500$Return),
   #           FUN=function(x) {cov(x[,1],x[,2])},width=n_window,by.column = F)
   StocksList[[i]]$Beta <- cov_stock_index/(StocksList[[i]]$SD^2)
-  CAPM_discount <- 1+LIBOR$Rate+StocksList[[i]]$Beta*(MSCI$AvgRet-LIBOR$Rate)
+  CAPM_discount <- 1+LIBOR$Rate+StocksList[[i]]$Beta*(SP500$AvgRet-LIBOR$Rate)
   StocksList[[i]]$CAPMPrice <- StocksList[[i]]$PredictNextPrice/CAPM_discount
 }
 
@@ -100,15 +101,15 @@ for (i in seq_along(stocknames)) {
   retplot <- c(retplot,as.numeric(last(StocksList[[i]]$AvgRet)))
 }
 
-plot(c(sdplot,1),c(retplot,last(MSCI$AvgRet)), #Index beta=1 by definition
+plot(c(sdplot,1),c(retplot,last(SP500$AvgRet)), #Index beta=1 by definition
      xlab="Beta",ylab="Mean Monthly Return",
      ylim=c(-0.012,0.03),
      xlim=c(0,1.2),
      main="Stocks on SML - Security market line")
-text(c(sdplot,1),c(retplot,last(MSCI$AvgRet)), #Index beta=1 by definition
-     c("Rf",stocknames,"MSCI"),pos=3,cex=0.6)
+text(c(sdplot,1),c(retplot,last(SP500$AvgRet)), #Index beta=1 by definition
+     c("Rf",stocknames,"SP500"),pos=3,cex=0.6)
 abline(as.numeric(last(LIBOR$Rate)),
-       as.numeric(last(MSCI$AvgRet)-last(LIBOR$Rate)),
+       as.numeric(last(SP500$AvgRet)-last(LIBOR$Rate)),
        col="blue",lty="dotted")
 
 #Semivariance implementation
@@ -176,30 +177,33 @@ RTRpctmax <- function(PriceGuess,RiskFunc,Rf,DistMat) {
 
 #Start calculations from first entry that incorporates full window used, no N/As
 calc_start <- N-n_window+1
-stocknames <- stocknames[1] #for debug only first stock
-vartime <- system.time(
+#stocknames <- stocknames[1] #for debug only first stock
+Rprof("../DataWork/Profiling.out",line.profiling = T)
+#vartime <- system.time(
   for (i in seq_along(stocknames)) {
     StocksList[[i]]$VarPrice     <-NA
     StocksList[[i]]$SVarPrice    <-NA
     StocksList[[i]]$VAR5pctPrice <-NA
-    StocksList[[i]]$BootVar      <-NA
-    StocksList[[i]]$BootVarCI5   <-NA
-    StocksList[[i]]$BootVarCI95  <-NA
-    StocksList[[i]]$BootSVar     <-NA
-    StocksList[[i]]$BootSVarCI5  <-NA
-    StocksList[[i]]$BootSVarCI95 <-NA
-    StocksList[[i]]$BootVAR      <-NA
-    StocksList[[i]]$BootVARCI5   <-NA
-    StocksList[[i]]$BootVARCI95  <-NA
+    if (run_bootstrap==TRUE) {
+      StocksList[[i]]$BootVar      <-NA
+      StocksList[[i]]$BootVarCI5   <-NA
+      StocksList[[i]]$BootVarCI95  <-NA
+      StocksList[[i]]$BootSVar     <-NA
+      StocksList[[i]]$BootSVarCI5  <-NA
+      StocksList[[i]]$BootSVarCI95 <-NA
+      StocksList[[i]]$BootVAR      <-NA
+      StocksList[[i]]$BootVARCI5   <-NA
+      StocksList[[i]]$BootVARCI95  <-NA
+    }
     #define convex function that has 0 at the lowest non-zero stock pct resolution
     f <- function(x,...) {RTRpctmax(x,...)-cap_pct[i]}
-    pb <- txtProgressBar(min=calc_start,max=N,style=3)
-    #1.5h current run time without bootstrap
-    DistMatTotal <- merge(MSCI$Return,StocksList[[i]]$Return) #distribution matrix
+#    pb <- txtProgressBar(min=calc_start,max=N,style=3)
+    #1.5h current run time without bootstrap, on i5 PC 0.6h with boot 100
+    DistMatTotal <- merge(SP500$Return,StocksList[[i]]$Return) #distribution matrix
     names(DistMatTotal) <- c("IndexRet","StockRet")
-    #for (j in calc_start:N) {
-      for (j in N:N) {  #for testing only last period
-      setTxtProgressBar(pb,j)
+    for (j in calc_start:N) {
+    #  for (j in N:N) {  #for testing only last period
+#      setTxtProgressBar(pb,j)
       rf <- as.numeric(LIBOR$Rate[j])
       cpr <- as.numeric(StocksList[[i]][j,"Price"])                #current price abbreviation
       DistMat <- DistMatTotal[(j-n_window+1):j]
@@ -211,8 +215,8 @@ vartime <- system.time(
                                                    Rf=rf,DistMat=DistMat)$root
       StocksList[[i]][j,"VAR5pctPrice"] <- uniroot(f,c(cpr/2,cpr*2),RiskFunc="VAR5pct",
                                                    Rf=rf,DistMat=DistMat)$root
-      if (j==N) {
-        bootN <- 1000
+      if ((j==N) && (run_bootstrap==TRUE)) {
+        bootN <- 10000 #run time 7.7hours on i5 PC for 10000
         VarPrice_vec  <- rep(0,bootN)
         SVarPrice_vec <- rep(0,bootN)
         VARPrice_vec  <- rep(0,bootN)
@@ -239,9 +243,11 @@ vartime <- system.time(
         StocksList[[i]][j,"BootVARCI95"] <- quantile(VARPrice_vec,0.95)
       }
     }
-    close(pb)
+#    close(pb)
   }
-  ,gcFirst=T)
+#  ,gcFirst=T)
+
+Rprof(NULL)
 
 save(StocksList,file="../DataWork/StocksList.Rdata")
 

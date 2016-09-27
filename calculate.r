@@ -4,8 +4,6 @@ library(gridExtra)
 library(utils)
 library(quantmod)
 
-#constant defining how many months of history to use, 120 for 10y
-n_window <- 120
 run_bootstrap=FALSE
 
 # Load data from disk: stock, LIBOR interest rate and SP500 global index
@@ -15,22 +13,28 @@ load("../DataWork/SP500.Rdata")
 load("../DataWork/cap_pct.Rdata")
 
 N <- dim(LIBOR)[1] #number of periods assumed consistent for all data structures
+#constant defining how many months of history to use, 120 for 10y monthly
+n_window <- round(N/2)
 
-#################### Data structures #############################
+#################### Data structures ##############################
 # Stocks, LIBOR, SP500 xts objects with prices for the 20y period #
 # dat - merged xts object of Stocks, LIBOR, SP500                 #
-# dat.ret - monthly return xts object - used for plotting        #
-# DistMat - distribution matrix of 10y stock+index returns       #
-#           used as probability proxy for each stock             #
-#           from current price create stock expected prices dist #
-#           and for each PriceGuess generate stock returns for   #
-#           use in RTR reward to risk maximization               #
-# StocksList - list of xts objects for each stock with actual    #
-#              monthly price and estimated prices for each risk  #
-#              discount factor                                   #
-##################################################################
+# dat.ret - monthly/daily return xts object - used for plotting   #
+# DistMat - distribution matrix of 10y stock+index returns        #
+#           used as probability proxy for each stock              #
+#           from current price create stock expected prices dist  #
+#           and for each PriceGuess generate stock returns for    #
+#           use in RTR reward to risk maximization                #
+# StocksList - list of xts objects for each stock with actual     #
+#              monthly/daily price and estimated prices for each  #
+#              risk discount factor                               #
+###################################################################
 
-LIBOR <- LIBOR/12/100 #transform to monthly percent
+LIBOR <- LIBOR/12/100                       #monthly percent
+if (periodicity(LIBOR)$scale=='daily') {
+  LIBOR <- LIBOR/30                         #daily percent
+}
+                    
 dat <- merge(LIBOR,SP500,Stocks)
 
 norm_col <- function(x) x/x[1]  #divide by first entry, oldest
@@ -64,7 +68,7 @@ ggplot(data.frame(coredata(dat.ret$SP500),coredata(dat.ret$IBM)),
        aes(x=SP500,y=IBM))+geom_point()+ggtitle("Returns distributions")
 
 colnames(LIBOR) <- "Rate"
-colnames(SP500)  <- "Price"
+colnames(SP500) <- "Price"
 SP500$Return <- ROC(SP500$Price,type="discrete",na.pad=F) #Rate of change, return %
 SP500$AvgRet <- rollapply(SP500$Return,FUN=mean,width=n_window)
 SP500$SD     <- rollapply(SP500$Return,FUN=sd,  width=n_window)
@@ -76,7 +80,7 @@ names(StocksList) <- stocknames
 for (i in seq_along(stocknames)) {
   StocksList[[i]] <- Stocks[,i]
   names(StocksList[[i]]) <- "Price"
-  #arithmetic return (Rate of Change) calculation for each month
+  #arithmetic return (Rate of Change) calculation for each month/day
   StocksList[[i]]$Return <- ROC(StocksList[[i]]$Price,type="discrete",na.pad=F)
   #moving average (rolling) for n_window back history
   StocksList[[i]]$AvgRet <- rollapply(StocksList[[i]]$Return,FUN=mean,width=n_window)
@@ -97,13 +101,19 @@ for (i in seq_along(stocknames)) {
 #graph showing CAPM prediction for return of stock vs market and risk free rate
 sdplot <- 0 ; retplot <- coredata(last(LIBOR$Rate))
 for (i in seq_along(stocknames)) {
-  sdplot <- c(sdplot,as.numeric(last(StocksList[[i]]$Beta)))
+  sdplot  <- c(sdplot, as.numeric(last(StocksList[[i]]$Beta)))
   retplot <- c(retplot,as.numeric(last(StocksList[[i]]$AvgRet)))
 }
 
+if (periodicity(LIBOR)$scale=='daily') {
+  yscale <- c(-0.012,0.05)/30
+} else {
+  yscale <- c(-0.012,0.03)
+}
+
 plot(c(sdplot,1),c(retplot,last(SP500$AvgRet)), #Index beta=1 by definition
-     xlab="Beta",ylab="Mean Monthly Return",
-     ylim=c(-0.012,0.03),
+     xlab="Beta",ylab="Mean Return",
+     ylim=yscale,
      xlim=c(0,1.2),
      main="Stocks on SML - Security market line")
 text(c(sdplot,1),c(retplot,last(SP500$AvgRet)), #Index beta=1 by definition
@@ -165,9 +175,9 @@ RTR <- function(StockWeight,PriceGuess,RiskFunc,Rf,DistMat){
 #calculate percent of stock in stock+index portfolio with maximum RTR
 #for given stock price and risk function using RTR function
 RTRpctmax <- function(PriceGuess,RiskFunc,Rf,DistMat) {
-  pctmax <- optimize(RTR,c(0,1),PriceGuess=PriceGuess,            #optimize stock% between 0-1
+  pctmax <- optimize(RTR,c(0,1),PriceGuess=PriceGuess,        #optimize stock% between 0-1
                      RiskFunc=RiskFunc,Rf=Rf,DistMat=DistMat,
-                     maximum=TRUE,tol=1e-9)$maximum               #find max
+                     maximum=TRUE,tol=1e-9)$maximum           #find max
   return(pctmax)
 }
 
@@ -178,8 +188,8 @@ RTRpctmax <- function(PriceGuess,RiskFunc,Rf,DistMat) {
 #Start calculations from first entry that incorporates full window used, no N/As
 calc_start <- N-n_window+1
 #stocknames <- stocknames[1] #for debug only first stock
-Rprof("../DataWork/Profiling.out",line.profiling = T)
-#vartime <- system.time(
+#Rprof("../DataWork/Profiling.out",line.profiling = T)
+vartime <- system.time(
   for (i in seq_along(stocknames)) {
     StocksList[[i]]$VarPrice     <-NA
     StocksList[[i]]$SVarPrice    <-NA
@@ -197,15 +207,15 @@ Rprof("../DataWork/Profiling.out",line.profiling = T)
     }
     #define convex function that has 0 at the lowest non-zero stock pct resolution
     f <- function(x,...) {RTRpctmax(x,...)-cap_pct[i]}
-#    pb <- txtProgressBar(min=calc_start,max=N,style=3)
+    pb <- txtProgressBar(min=calc_start,max=N,style=3)
     #1.5h current run time without bootstrap, on i5 PC 0.6h with boot 100
     DistMatTotal <- merge(SP500$Return,StocksList[[i]]$Return) #distribution matrix
     names(DistMatTotal) <- c("IndexRet","StockRet")
     for (j in calc_start:N) {
     #  for (j in N:N) {  #for testing only last period
-#      setTxtProgressBar(pb,j)
+      setTxtProgressBar(pb,j)
       rf <- as.numeric(LIBOR$Rate[j])
-      cpr <- as.numeric(StocksList[[i]][j,"Price"])                #current price abbreviation
+      cpr <- as.numeric(StocksList[[i]][j,"Price"])    #current price abbreviation
       DistMat <- DistMatTotal[(j-n_window+1):j]
       DistMat$StockPrices <- cpr*(1+DistMat$StockRet)  #distribution of expected prices
       DistMat <- DistMat[,c("IndexRet","StockPrices")]
@@ -243,11 +253,11 @@ Rprof("../DataWork/Profiling.out",line.profiling = T)
         StocksList[[i]][j,"BootVARCI95"] <- quantile(VARPrice_vec,0.95)
       }
     }
-#    close(pb)
+    close(pb)
   }
-#  ,gcFirst=T)
+  ,gcFirst=T)
 
-Rprof(NULL)
+#Rprof(NULL)
 
 save(StocksList,file="../DataWork/StocksList.Rdata")
 

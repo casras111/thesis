@@ -3,6 +3,7 @@ library(reshape2)
 library(gridExtra)
 library(utils)
 library(quantmod)
+library(moments)    #for skewness function
 
 run_bootstrap=FALSE
 
@@ -10,7 +11,7 @@ run_bootstrap=FALSE
 load("../DataWork/Stocks.Rdata")
 load("../DataWork/LIBOR.Rdata")
 load("../DataWork/SP500.Rdata")
-load("../DataWork/cap_pct.Rdata")
+#load("../DataWork/cap_pct.Rdata")
 
 N <- dim(LIBOR)[1] #number of periods assumed consistent for all data structures
 #constant defining how many months of history to use, 120 for 10y monthly
@@ -47,25 +48,25 @@ plotdat <- melt(plotdat,id="Date",value.name = "NormalizedPrice")
 ggplot(plotdat,aes(x=Date,y=NormalizedPrice,colour=variable))+geom_line()+
   ggtitle("SP500 vs Stocks scaled returns")
 
-#graph with index,ibm and libor each in a separate row
-plotdat2 <- data.frame(Date=index(dat),coredata(dat))
-g1 <- ggplot(plotdat2,aes(x=Date,y=IBM))+geom_line()+labs(x="Date",y="Price")+
-  ggtitle("IBM stock price")
-g2 <- ggplot(plotdat2,aes(x=Date,y=SP500))+geom_line()+labs(x="Date",y="Price")+
-  ggtitle("SP500 index price")
-g3 <- ggplot(plotdat2,aes(x=Date,y=LIBOR))+geom_line()+labs(x="Date",y="Rate")+
-  ggtitle("LIBOR rate")
-grid.arrange(g1,g2,g3,nrow=3)
-
-dat.ret <- ROC(dat,type="discrete",na.pad=F) #returns calculation
-
-ggplot(data.frame(coredata(dat.ret$SP500),coredata(dat.ret$IBM)))+
-  geom_density(aes(x=SP500),fill="grey",alpha=0.5)+
-  geom_density(aes(x=IBM),fill="blue",alpha=0.2) +
-  ggtitle("Returns distributions")
-
-ggplot(data.frame(coredata(dat.ret$SP500),coredata(dat.ret$IBM)),
-       aes(x=SP500,y=IBM))+geom_point()+ggtitle("Returns distributions")
+# #graph with index,ibm and libor each in a separate row
+# plotdat2 <- data.frame(Date=index(dat),coredata(dat))
+# g1 <- ggplot(plotdat2,aes(x=Date,y=IBM))+geom_line()+labs(x="Date",y="Price")+
+#   ggtitle("IBM stock price")
+# g2 <- ggplot(plotdat2,aes(x=Date,y=SP500))+geom_line()+labs(x="Date",y="Price")+
+#   ggtitle("SP500 index price")
+# g3 <- ggplot(plotdat2,aes(x=Date,y=LIBOR))+geom_line()+labs(x="Date",y="Rate")+
+#   ggtitle("LIBOR rate")
+# grid.arrange(g1,g2,g3,nrow=3)
+# 
+# dat.ret <- ROC(dat,type="discrete",na.pad=F) #returns calculation
+# 
+# ggplot(data.frame(coredata(dat.ret$SP500),coredata(dat.ret$IBM)))+
+#   geom_density(aes(x=SP500),fill="grey",alpha=0.5)+
+#   geom_density(aes(x=IBM),fill="blue",alpha=0.2) +
+#   ggtitle("Returns distributions")
+# 
+# ggplot(data.frame(coredata(dat.ret$SP500),coredata(dat.ret$IBM)),
+#        aes(x=SP500,y=IBM))+geom_point()+ggtitle("Returns distributions")
 
 colnames(LIBOR) <- "Rate"
 colnames(SP500) <- "Price"
@@ -86,6 +87,9 @@ for (i in seq_along(stocknames)) {
   StocksList[[i]]$AvgRet <- rollapply(StocksList[[i]]$Return,FUN=mean,width=n_window)
   #standard deviation (cumulative rolling) for n_window back history
   StocksList[[i]]$SD <- rollapply(StocksList[[i]]$Return,FUN=sd,width=n_window)
+  #skewness (cumulative rolling) for n_window back history
+  StocksList[[i]]$Skew <- rollapply(StocksList[[i]]$Return,FUN=skewness,
+                                    width=n_window,na.rm=T)
   #Next period price predict based on average return known
   StocksList[[i]]$PredictNextPrice <- StocksList[[i]]$Price*(1+StocksList[[i]]$AvgRet)
   #Price taking into account CAPM risk
@@ -181,9 +185,9 @@ RTRpctmax <- function(PriceGuess,RiskFunc,Rf,DistMat) {
   return(pctmax)
 }
 
-# cap_pct <- 0.000001 #percent of capitalization of stock out of total market index
-# #define convex function that has 0 at the lowest non-zero stock pct resolution
-# f <- function(x,...) {RTRpctmax(x,...)-cap_pct}
+cap_pct <- 0.00001 #percent of capitalization of stock out of total market index
+#define convex function that has 0 at the lowest non-zero stock pct resolution
+f <- function(x,...) {RTRpctmax(x,...)-cap_pct}
 
 #Start calculations from first entry that incorporates full window used, no N/As
 calc_start <- N-n_window+1
@@ -206,54 +210,57 @@ vartime <- system.time(
       StocksList[[i]]$BootVARCI95  <-NA
     }
     #define convex function that has 0 at the lowest non-zero stock pct resolution
-    f <- function(x,...) {RTRpctmax(x,...)-cap_pct[i]}
-    pb <- txtProgressBar(min=calc_start,max=N,style=3)
-    #1.5h current run time without bootstrap, on i5 PC 0.6h with boot 100
-    DistMatTotal <- merge(SP500$Return,StocksList[[i]]$Return) #distribution matrix
-    names(DistMatTotal) <- c("IndexRet","StockRet")
-    for (j in calc_start:N) {
-    #  for (j in N:N) {  #for testing only last period
-      setTxtProgressBar(pb,j)
-      rf <- as.numeric(LIBOR$Rate[j])
-      cpr <- as.numeric(StocksList[[i]][j,"Price"])    #current price abbreviation
-      DistMat <- DistMatTotal[(j-n_window+1):j]
-      DistMat$StockPrices <- cpr*(1+DistMat$StockRet)  #distribution of expected prices
-      DistMat <- DistMat[,c("IndexRet","StockPrices")]
-      StocksList[[i]][j,"VarPrice"]     <- uniroot(f,c(cpr/2,cpr*2),RiskFunc="pop.sd",
-                                                   Rf=rf,DistMat=DistMat)$root
-      StocksList[[i]][j,"SVarPrice"]    <- uniroot(f,c(cpr/2,cpr*2),RiskFunc="svar",
-                                                   Rf=rf,DistMat=DistMat)$root
-      StocksList[[i]][j,"VAR5pctPrice"] <- uniroot(f,c(cpr/2,cpr*2),RiskFunc="VAR5pct",
-                                                   Rf=rf,DistMat=DistMat)$root
-      if ((j==N) && (run_bootstrap==TRUE)) {
-        bootN <- 10000 #run time 7.7hours on i5 PC for 10000
-        VarPrice_vec  <- rep(0,bootN)
-        SVarPrice_vec <- rep(0,bootN)
-        VARPrice_vec  <- rep(0,bootN)
-        for (q in 1:bootN) {
-          DistMatSample <- DistMat[sample(n_window,replace=T)]        #bootstrap samples
-          VarPrice_vec[q] <- uniroot(f,c(cpr/2,cpr*2),RiskFunc="pop.sd",
-                                  Rf=rf,DistMat=DistMatSample)$root
-          SVarPrice_vec[q] <- uniroot(f,c(cpr/2,cpr*2),RiskFunc="svar",
-                                     Rf=rf,DistMat=DistMatSample)$root
-          VARPrice_vec[q] <- uniroot(f,c(cpr/2,cpr*2),RiskFunc="VAR5pct",
-                                                                                                 Rf=rf,DistMat=DistMatSample)$root
+    #f <- function(x,...) {RTRpctmax(x,...)-cap_pct[i]}
+    #f <- function(x,...) {RTRpctmax(x,...)-0.000001}
+    if ((i!=7)&&(i!=28)) {  #temporary workaround, check if 7,28 are the only miss
+      pb <- txtProgressBar(min=calc_start,max=N,style=3)
+      #1.5h current run time without bootstrap, on i5 PC 0.6h with boot 100
+      DistMatTotal <- merge(SP500$Return,StocksList[[i]]$Return) #distribution matrix
+      names(DistMatTotal) <- c("IndexRet","StockRet")
+      for (j in calc_start:N) {
+        #  for (j in N:N) {  #for testing only last period
+        setTxtProgressBar(pb,j)
+        rf <- as.numeric(LIBOR$Rate[j])
+        cpr <- as.numeric(StocksList[[i]][j,"Price"])    #current price abbreviation
+        DistMat <- DistMatTotal[(j-n_window+1):j]
+        DistMat$StockPrices <- cpr*(1+DistMat$StockRet)  #distribution of expected prices
+        DistMat <- DistMat[,c("IndexRet","StockPrices")]
+        StocksList[[i]][j,"VarPrice"]     <- uniroot(f,c(cpr/2,cpr*2),RiskFunc="pop.sd",
+                                                     Rf=rf,DistMat=DistMat)$root
+        StocksList[[i]][j,"SVarPrice"]    <- uniroot(f,c(cpr/2,cpr*2),RiskFunc="svar",
+                                                     Rf=rf,DistMat=DistMat)$root
+        StocksList[[i]][j,"VAR5pctPrice"] <- uniroot(f,c(cpr/2,cpr*2),RiskFunc="VAR5pct",
+                                                     Rf=rf,DistMat=DistMat)$root
+        if ((j==N) && (run_bootstrap==TRUE)) {
+          bootN <- 10000 #run time 7.7hours on i5 PC for 10000
+          VarPrice_vec  <- rep(0,bootN)
+          SVarPrice_vec <- rep(0,bootN)
+          VARPrice_vec  <- rep(0,bootN)
+          for (q in 1:bootN) {
+            DistMatSample <- DistMat[sample(n_window,replace=T)]        #bootstrap samples
+            VarPrice_vec[q] <- uniroot(f,c(cpr/2,cpr*2),RiskFunc="pop.sd",
+                                       Rf=rf,DistMat=DistMatSample)$root
+            SVarPrice_vec[q] <- uniroot(f,c(cpr/2,cpr*2),RiskFunc="svar",
+                                        Rf=rf,DistMat=DistMatSample)$root
+            VARPrice_vec[q] <- uniroot(f,c(cpr/2,cpr*2),RiskFunc="VAR5pct",
+                                       Rf=rf,DistMat=DistMatSample)$root
+          }
+          hist(VarPrice_vec)
+          StocksList[[i]][j,"BootVar"] <- mean(VarPrice_vec)
+          StocksList[[i]][j,"BootVarCI5"] <- quantile(VarPrice_vec,0.05)
+          StocksList[[i]][j,"BootVarCI95"] <- quantile(VarPrice_vec,0.95)
+          hist(SVarPrice_vec)
+          StocksList[[i]][j,"BootSVar"] <- mean(SVarPrice_vec)
+          StocksList[[i]][j,"BootSVarCI5"] <- quantile(SVarPrice_vec,0.05)
+          StocksList[[i]][j,"BootSVarCI95"] <- quantile(SVarPrice_vec,0.95)
+          hist(VARPrice_vec)
+          StocksList[[i]][j,"BootVAR"] <- mean(VARPrice_vec)
+          StocksList[[i]][j,"BootVARCI5"] <- quantile(VARPrice_vec,0.05)
+          StocksList[[i]][j,"BootVARCI95"] <- quantile(VARPrice_vec,0.95)
         }
-        hist(VarPrice_vec)
-        StocksList[[i]][j,"BootVar"] <- mean(VarPrice_vec)
-        StocksList[[i]][j,"BootVarCI5"] <- quantile(VarPrice_vec,0.05)
-        StocksList[[i]][j,"BootVarCI95"] <- quantile(VarPrice_vec,0.95)
-        hist(SVarPrice_vec)
-        StocksList[[i]][j,"BootSVar"] <- mean(SVarPrice_vec)
-        StocksList[[i]][j,"BootSVarCI5"] <- quantile(SVarPrice_vec,0.05)
-        StocksList[[i]][j,"BootSVarCI95"] <- quantile(SVarPrice_vec,0.95)
-        hist(VARPrice_vec)
-        StocksList[[i]][j,"BootVAR"] <- mean(VARPrice_vec)
-        StocksList[[i]][j,"BootVARCI5"] <- quantile(VARPrice_vec,0.05)
-        StocksList[[i]][j,"BootVARCI95"] <- quantile(VARPrice_vec,0.95)
       }
+      close(pb)
     }
-    close(pb)
   }
   ,gcFirst=T)
 

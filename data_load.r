@@ -1,14 +1,18 @@
 library(xlsx)
 library(quantmod)
 
-hist_daily=T
+hist_daily=F
 startDate <- "1996/1/1"
 endDate   <- "2015/12/31"
 period_filter <- paste0(substr(startDate,1,4),"::",substr(endDate,1,4))
 options("getSymbols.warning4.0"=FALSE)
 
 # Get stock data from Yahoo Finance, daily
-mysymbols <- c("IBM","AAPL","IHT","USEG","LNN")
+#mysymbols <- c("IBM","AAPL","IHT","USEG","LNN")
+#read companies names from screening file with US stocks from before 1960
+#daily vol greater than 0.1mm
+allstocks <- read.table("../DataRaw/companies.csv",sep=",",stringsAsFactors = F)
+mysymbols <- sample(allstocks[,2],50)
 getSymbols(mysymbols,src="yahoo", auto.assign = T,from=startDate,to=endDate)
 s1 <- Ad(get(mysymbols[1])) #keep only Adjusted.Close, get for string to var
 Stocks <- s1
@@ -58,14 +62,14 @@ if (!hist_daily) {                               #keep only end of month
 
 which(is.na(merge(SP500,LIBOR,Stocks)$SP500)) #should be length 0
 
-indexcap <- 19000 #$19000 milliard SP500
-cap <- c(152.5,580.5,0.02197,0.00887,0.77376) #2014 EOY market caps
-cap_pct <- cap/indexcap
-names(cap_pct) <- mysymbols
+#indexcap <- 19000 #$19000 milliard SP500
+#cap <- c(152.5,580.5,0.02197,0.00887,0.77376) #2014 EOY market caps
+#cap_pct <- cap/indexcap
+#names(cap_pct) <- mysymbols
 
 #Save Rdata variables for calculate module
 save(Stocks,file="../DataWork/Stocks.Rdata")
 save(LIBOR,file="../DataWork/LIBOR.Rdata")
 #save(MSCI,file="../DataWork/MSCI.Rdata")
 save(SP500,file="../DataWork/SP500.Rdata")
-save(cap_pct,file="../DataWork/cap_pct.Rdata")
+#save(cap_pct,file="../DataWork/cap_pct.Rdata")

@@ -212,7 +212,7 @@ vartime <- system.time(
     #define convex function that has 0 at the lowest non-zero stock pct resolution
     #f <- function(x,...) {RTRpctmax(x,...)-cap_pct[i]}
     #f <- function(x,...) {RTRpctmax(x,...)-0.000001}
-    if ((i!=7)&&(i!=28)) {  #temporary workaround, check if 7,28 are the only miss
+    if ((i!=7)&&(i!=29)) {  #temporary workaround, check if 7,29 are the only miss
       pb <- txtProgressBar(min=calc_start,max=N,style=3)
       #1.5h current run time without bootstrap, on i5 PC 0.6h with boot 100
       DistMatTotal <- merge(SP500$Return,StocksList[[i]]$Return) #distribution matrix

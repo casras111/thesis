@@ -37,7 +37,7 @@ RMSE_SVar <- sapply(sapply(StocksList,last)[completeIndx],function(x) {return(x$
 skew_df <- as.data.frame(cbind(skew,skew_avg,RMSE_Var,RMSE_SVar))
 skew_df$Var_best <- (skew_df$RMSE_Var < skew_df$RMSE_SVar)
 
-tt <- lm((skew_df$RMSE_Var>skew_df$RMSE_SVar) ~ skew_df$skew_avg)
+tt <- lm((skew_df$RMSE_Var>skew_df$RMSE_SVar) ~ skew_df$skew)
 summary(tt)
 tt2 <- lm((skew_df$RMSE_Var>skew_df$RMSE_SVar) ~ skew_df$skew_avg)
 summary(tt2)

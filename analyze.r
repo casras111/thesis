@@ -5,9 +5,10 @@ library(quantmod)
 library(reshape2)
 library(gridExtra)
 
-load(file="C:/Users/Claudiu/Dropbox/Thesis/Docs/StocksList26092016Daily_5stocks.Rdata")
+#load(file="C:/Users/Claudiu/Dropbox/Thesis/Docs/StocksList26092016Daily_5stocks.Rdata")
 #load(file="C:/Users/Claudiu/Dropbox/Thesis/Docs/StocksList21092016Bootstrap10000_5stocks.Rdata")
 #run_bootstrap=FALSE
+load(file="C:/Users/Claudiu/Dropbox/Thesis/Docs/StocksList16122016Monthly48stocks.Rdata")
 
 load("../DataWork/Stocks.Rdata")
 stocknames <- colnames(Stocks)

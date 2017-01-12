@@ -179,9 +179,16 @@ RTR <- function(StockWeight,PriceGuess,RiskFunc,Rf,DistMat){
 #calculate percent of stock in stock+index portfolio with maximum RTR
 #for given stock price and risk function using RTR function
 RTRpctmax <- function(PriceGuess,RiskFunc,Rf,DistMat) {
-  pctmax <- optimize(RTR,c(0,1),PriceGuess=PriceGuess,        #optimize stock% between 0-1
+  #because of bimodal function received empirically splitting the search
+  #space to 2 halves allow finding global max instead of local
+  pctmax1 <- optimize(RTR,c(0,0.5),PriceGuess=PriceGuess,     #optimize stock% between 0-1
                      RiskFunc=RiskFunc,Rf=Rf,DistMat=DistMat,
-                     maximum=TRUE,tol=1e-9)$maximum           #find max
+                     maximum=TRUE,tol=1e-9)                   #find max
+  pctmax2 <- optimize(RTR,c(0.5,1),PriceGuess=PriceGuess,     #optimize stock% between 0-1
+                      RiskFunc=RiskFunc,Rf=Rf,DistMat=DistMat,
+                      maximum=TRUE,tol=1e-9)                  #find max
+  pctmax <- ifelse(pctmax1$objective>pctmax2$objective,
+                   pctmax1$maximum,pctmax2$maximum)
   return(pctmax)
 }
 
@@ -212,20 +219,20 @@ vartime <- system.time(
     #define convex function that has 0 at the lowest non-zero stock pct resolution
     #f <- function(x,...) {RTRpctmax(x,...)-cap_pct[i]}
     #f <- function(x,...) {RTRpctmax(x,...)-0.000001}
-    if ((i!=7)&&(i!=29)) {  #temporary workaround, check if 7,29 are the only miss
+    if (i==29) { #((i!=7)&&(i!=29)) {  #temporary workaround, check if 7,29 are the only miss
       pb <- txtProgressBar(min=calc_start,max=N,style=3)
       #1.5h current run time without bootstrap, on i5 PC 0.6h with boot 100
       DistMatTotal <- merge(SP500$Return,StocksList[[i]]$Return) #distribution matrix
       names(DistMatTotal) <- c("IndexRet","StockRet")
       for (j in calc_start:N) {
-        #  for (j in N:N) {  #for testing only last period
+      #for (j in N:N) {  #for testing only last period
         setTxtProgressBar(pb,j)
         rf <- as.numeric(LIBOR$Rate[j])
         cpr <- as.numeric(StocksList[[i]][j,"Price"])    #current price abbreviation
         DistMat <- DistMatTotal[(j-n_window+1):j]
         DistMat$StockPrices <- cpr*(1+DistMat$StockRet)  #distribution of expected prices
         DistMat <- DistMat[,c("IndexRet","StockPrices")]
-        StocksList[[i]][j,"VarPrice"]     <- uniroot(f,c(cpr/2,cpr*2),RiskFunc="pop.sd",
+        StocksList[[i]][j,"VarPrice"]     <- uniroot(f,c(cpr/2,cpr*2),RiskFunc="sd",
                                                      Rf=rf,DistMat=DistMat)$root
         StocksList[[i]][j,"SVarPrice"]    <- uniroot(f,c(cpr/2,cpr*2),RiskFunc="svar",
                                                      Rf=rf,DistMat=DistMat)$root
@@ -238,7 +245,7 @@ vartime <- system.time(
           VARPrice_vec  <- rep(0,bootN)
           for (q in 1:bootN) {
             DistMatSample <- DistMat[sample(n_window,replace=T)]        #bootstrap samples
-            VarPrice_vec[q] <- uniroot(f,c(cpr/2,cpr*2),RiskFunc="pop.sd",
+            VarPrice_vec[q] <- uniroot(f,c(cpr/2,cpr*2),RiskFunc="sd",
                                        Rf=rf,DistMat=DistMatSample)$root
             SVarPrice_vec[q] <- uniroot(f,c(cpr/2,cpr*2),RiskFunc="svar",
                                         Rf=rf,DistMat=DistMatSample)$root
@@ -296,24 +303,24 @@ for (i in seq_along(stocknames)) {
 # sum(ibm$ProfitSVAR,na.rm=TRUE)
 #ibm %>% filter(!is.na(ProfitVAR)) %>% summarize(prVAR=sum(ProfitVAR))
 
-for (i in seq_along(stocknames)) {
-  plot.xts <- StocksList[[i]][calc_start:N,c("Price","CAPMPrice","VarPrice","SVarPrice","VAR5pctPrice")]
-  plot.df <- data.frame(coredata(plot.xts))
-  plot.df$Date <- index(plot.xts)
-  plotdat2 <- melt(plot.df,id="Date",value.name="PlotPrice")
-  title_string <- paste(stocknames[i],
-                        "Actual price Vs risk discount estimated prices")
-  g1<- ggplot(plotdat2,aes(x=Date,y=PlotPrice,colour=variable))+geom_line()+
-    ggtitle(title_string)
-  # print(g1) #not separate enough for visualizing differences
-  pricesdat <- 100*(plot.df[,-c(1,6)]-plot.df$Price)/plot.df$Price
-  pricesdat$Date <- index(plot.xts)
-  plotdat2 <- melt(pricesdat,id="Date",value.name="PlotPrice")
-  title_string <- paste(stocknames[i],
-                        "Risk discount estimated prices vs real price")
-  g2 <- ggplot(plotdat2,aes(x=Date,y=PlotPrice,colour=variable))+geom_line()+
-    labs(y="Price error pct")+
-    ggtitle(title_string)
-  #print(g2)
-  grid.arrange(g1,g2,nrow=2)
-}
+# for (i in seq_along(stocknames)) {
+#   plot.xts <- StocksList[[i]][calc_start:N,c("Price","CAPMPrice","VarPrice","SVarPrice","VAR5pctPrice")]
+#   plot.df <- data.frame(coredata(plot.xts))
+#   plot.df$Date <- index(plot.xts)
+#   plotdat2 <- melt(plot.df,id="Date",value.name="PlotPrice")
+#   title_string <- paste(stocknames[i],
+#                         "Actual price Vs risk discount estimated prices")
+#   g1<- ggplot(plotdat2,aes(x=Date,y=PlotPrice,colour=variable))+geom_line()+
+#     ggtitle(title_string)
+#   # print(g1) #not separate enough for visualizing differences
+#   pricesdat <- 100*(plot.df[,-c(1,6)]-plot.df$Price)/plot.df$Price
+#   pricesdat$Date <- index(plot.xts)
+#   plotdat2 <- melt(pricesdat,id="Date",value.name="PlotPrice")
+#   title_string <- paste(stocknames[i],
+#                         "Risk discount estimated prices vs real price")
+#   g2 <- ggplot(plotdat2,aes(x=Date,y=PlotPrice,colour=variable))+geom_line()+
+#     labs(y="Price error pct")+
+#     ggtitle(title_string)
+#   #print(g2)
+#   grid.arrange(g1,g2,nrow=2)
+# }

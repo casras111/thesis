@@ -2,14 +2,13 @@
 
 library(quantmod)
 
-load(file="C:/Users/Claudiu/Dropbox/Thesis/Docs/StocksList09122016Monthly28stocks.Rdata")
+load(file="C:/Users/Claudiu/Dropbox/Thesis/Docs/StocksList16122016Monthly48stocks.Rdata")
 
 #vector with names of stocks that have completed runs
 completeStocks <- names(StocksList)[sapply(lapply(StocksList,last),length)==11]
-completeStocks <- completeStocks[-7]   #incomplete run MIN
-completeStocks <- completeStocks[-28]  #incomplete run UVSP
+completeStocks <- completeStocks[c(-7,-29)]   #incomplete run MIN,UVSP
 completeIndx <- (1:length(StocksList))[sapply(lapply(StocksList,last),length)==11]
-completeIndx <- completeIndx[-7][-28] #incomplete runs
+completeIndx <- completeIndx[c(-7,-29)] #incomplete runs
 
 N <- dim(StocksList[[1]])[1] #number of periods assumed consistent for all data structures
 #constant defining how many months of history to use, 120 for 10y monthly
@@ -29,16 +28,22 @@ for (i in completeIndx) {
   StocksList[[i]]$skewavg <- mean(StocksList[[i]]$Skew,na.rm=T)
 }
 
-skew      <- sapply(sapply(StocksList,last)[completeIndx],function(x) {return(x$Skew)})
-skew_avg  <- sapply(sapply(StocksList,last)[completeIndx],function(x) {return(x$skewavg)})
-RMSE_Var  <- sapply(sapply(StocksList,last)[completeIndx],function(x) {return(x$RMSE_Var)})
-RMSE_SVar <- sapply(sapply(StocksList,last)[completeIndx],function(x) {return(x$RMSE_SVar)})
+skew_last     <- sapply(sapply(StocksList,last)[completeIndx],function(x) {return(x$Skew)})
+skew_first    <- sapply(sapply(StocksList,function(x) {return(first(last(x,120)))})[completeIndx],
+                    function(x) {return(x$Skew)})
+skew_avg      <- 0.5*(skew_last+skew_first)
+skew_rollavg  <- sapply(sapply(StocksList,last)[completeIndx],function(x) {return(x$skewavg)})
+RMSE_Var      <- sapply(sapply(StocksList,last)[completeIndx],function(x) {return(x$RMSE_Var)})
+RMSE_SVar     <- sapply(sapply(StocksList,last)[completeIndx],function(x) {return(x$RMSE_SVar)})
 
-skew_df <- as.data.frame(cbind(skew,skew_avg,RMSE_Var,RMSE_SVar))
+skew_df <- as.data.frame(cbind(skew_last,skew_first,skew_avg,skew_rollavg,RMSE_Var,RMSE_SVar))
 skew_df$Var_best <- (skew_df$RMSE_Var < skew_df$RMSE_SVar)
 
-tt <- lm((skew_df$RMSE_Var>skew_df$RMSE_SVar) ~ skew_df$skew)
+tt <- lm((skew_df$RMSE_Var>skew_df$RMSE_SVar) ~ skew_df$skew_first)
 summary(tt)
-tt2 <- lm((skew_df$RMSE_Var>skew_df$RMSE_SVar) ~ skew_df$skew_avg)
+tt2 <- lm((skew_df$RMSE_Var>skew_df$RMSE_SVar) ~ skew_df$skew_rollavg)
 summary(tt2)
+tt3 <- lm((skew_df$RMSE_Var>skew_df$RMSE_SVar) ~ skew_df$skew_avg)
+summary(tt3)
 boxplot(skew_df$skew_avg~skew_df$Var_best)
+title("RMSE Variance < RMSE Semivariance as a function of skewness")

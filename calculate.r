@@ -7,7 +7,7 @@ library(moments)    #for skewness function
 
 run_bootstrap=FALSE
 
-# Load data from disk: stock, LIBOR interest rate and SP500 global index
+# Load data from disk: stocks, LIBOR interest rate and SP500 index
 load("../DataWork/Stocks.Rdata")
 load("../DataWork/LIBOR.Rdata")
 load("../DataWork/SP500.Rdata")
@@ -39,34 +39,15 @@ if (periodicity(LIBOR)$scale=='daily') {
 dat <- merge(LIBOR,SP500,Stocks)
 
 norm_col <- function(x) x/x[1]  #divide by first entry, oldest
-#removing Apple from plot, 1000% stock return in 20y
-rm_cols <- which(colnames(dat) %in% c("LIBOR","AAPL"))
+#removing LIBOR from plot
+rm_cols <- which(colnames(dat) %in% c("LIBOR"))
 plotdat <- as.data.frame(apply(dat[,-rm_cols],2,norm_col))
-plotdat.xts <- apply(dat[,-rm_cols],2,norm_col)
 plotdat$Date <- index(dat)
-plotdat <- melt(plotdat,id="Date",value.name = "NormalizedPrice")
-ggplot(plotdat,aes(x=Date,y=NormalizedPrice,colour=variable))+geom_line()+
-  ggtitle("SP500 vs Stocks scaled returns")
-
-# #graph with index,ibm and libor each in a separate row
-# plotdat2 <- data.frame(Date=index(dat),coredata(dat))
-# g1 <- ggplot(plotdat2,aes(x=Date,y=IBM))+geom_line()+labs(x="Date",y="Price")+
-#   ggtitle("IBM stock price")
-# g2 <- ggplot(plotdat2,aes(x=Date,y=SP500))+geom_line()+labs(x="Date",y="Price")+
-#   ggtitle("SP500 index price")
-# g3 <- ggplot(plotdat2,aes(x=Date,y=LIBOR))+geom_line()+labs(x="Date",y="Rate")+
-#   ggtitle("LIBOR rate")
-# grid.arrange(g1,g2,g3,nrow=3)
-# 
-# dat.ret <- ROC(dat,type="discrete",na.pad=F) #returns calculation
-# 
-# ggplot(data.frame(coredata(dat.ret$SP500),coredata(dat.ret$IBM)))+
-#   geom_density(aes(x=SP500),fill="grey",alpha=0.5)+
-#   geom_density(aes(x=IBM),fill="blue",alpha=0.2) +
-#   ggtitle("Returns distributions")
-# 
-# ggplot(data.frame(coredata(dat.ret$SP500),coredata(dat.ret$IBM)),
-#        aes(x=SP500,y=IBM))+geom_point()+ggtitle("Returns distributions")
+plotdat <- melt(plotdat,id="Date",value.name = "Returns")
+#using log scale to deal with cases like AAPL - 1000% in 20 years
+g1 <- ggplot(plotdat,aes(x=Date,y=Returns,colour=variable))+geom_line()+
+  scale_y_log10()+ggtitle("SP500 and Stocks log scaled 20 years returns")
+print(g1)
 
 colnames(LIBOR) <- "Rate"
 colnames(SP500) <- "Price"
@@ -97,7 +78,8 @@ for (i in seq_along(stocknames)) {
   #alternative cov calculation using rollapply
   #rollapply(merge(StocksList[[i]]$Return,SP500$Return),
   #           FUN=function(x) {cov(x[,1],x[,2])},width=n_window,by.column = F)
-  StocksList[[i]]$Beta <- cov_stock_index/(StocksList[[i]]$SD^2)
+  #StocksList[[i]]$Beta <- cov_stock_index/(StocksList[[i]]$SD^2)
+  StocksList[[i]]$Beta <- cov_stock_index/(SP500$SD^2) #fix beta bug
   CAPM_discount <- 1+LIBOR$Rate+StocksList[[i]]$Beta*(SP500$AvgRet-LIBOR$Rate)
   StocksList[[i]]$CAPMPrice <- StocksList[[i]]$PredictNextPrice/CAPM_discount
 }
@@ -216,16 +198,13 @@ vartime <- system.time(
       StocksList[[i]]$BootVARCI5   <-NA
       StocksList[[i]]$BootVARCI95  <-NA
     }
-    #define convex function that has 0 at the lowest non-zero stock pct resolution
-    #f <- function(x,...) {RTRpctmax(x,...)-cap_pct[i]}
-    #f <- function(x,...) {RTRpctmax(x,...)-0.000001}
-    if (i==29) { #((i!=7)&&(i!=29)) {  #temporary workaround, check if 7,29 are the only miss
+    if ((i!=7)&&(i!=29)) {  #temporary workaround, check if 7,29 are the only miss
       pb <- txtProgressBar(min=calc_start,max=N,style=3)
       #1.5h current run time without bootstrap, on i5 PC 0.6h with boot 100
       DistMatTotal <- merge(SP500$Return,StocksList[[i]]$Return) #distribution matrix
       names(DistMatTotal) <- c("IndexRet","StockRet")
-      for (j in calc_start:N) {
-      #for (j in N:N) {  #for testing only last period
+      #for (j in calc_start:N) {
+      for (j in N:N) {  #for testing only last period
         setTxtProgressBar(pb,j)
         rf <- as.numeric(LIBOR$Rate[j])
         cpr <- as.numeric(StocksList[[i]][j,"Price"])    #current price abbreviation

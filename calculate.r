@@ -146,9 +146,9 @@ pop.sd <- function (x) {return(sqrt(sum((x-mean(x))^2)/length(x)))}
 #calculate reward to risk ratio of stock+index portfolio for different risk functions
 #from assumed probability distribution of returns DistMat and assumed price PriceGuess
 RTR <- function(StockWeight,PriceGuess,RiskFunc,Rf,DistMat){
-  DistMat$Ret_i <- DistMat$StockPrices/PriceGuess-1  #derived returns
+  Ret_i <- DistMat$StockPrices/PriceGuess-1  #derived returns
   #Portfolio returns vector
-  RetVec <- StockWeight*DistMat$Ret_i+(1-StockWeight)*DistMat$IndexRet
+  RetVec <- StockWeight*Ret_i+(1-StockWeight)*DistMat$IndexRet
   RetPortfolio <- mean(RetVec)-Rf                     #return mean - risk free
   RiskPortfolio <- do.call(RiskFunc,list(x=RetVec))   #risk measure
   RiskPortfolio <- RiskPortfolio^(sign(RetPortfolio)) #Israelsen correction for negative rets

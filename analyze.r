@@ -28,29 +28,35 @@ for (i in seq_along(stocknames)) {
               stocknames[i],RMSE1,RMSE2,RMSE3,RMSE4))
 }
 
-for (i in seq_along(stocknames)) {
-  print(stocknames[i])
-  print(StocksList[[i]][N,bootcols])
+#if data contains bootstrap columns show last period stats
+if (!is.null(dim(bootcols))) {
+  for (i in seq_along(stocknames)) {
+    print(stocknames[i])
+    print(StocksList[[i]][N,bootcols])
+  }
 }
 
 for (i in seq_along(stocknames)) {
-  plot.xts <- StocksList[[i]][calc_start:N,c("Price","CAPMPrice","VarPrice","SVarPrice","VAR5pctPrice")]
-  plot.df <- data.frame(coredata(plot.xts))
-  plot.df$Date <- index(plot.xts)
-  plotdat2 <- melt(plot.df,id="Date",value.name="PlotPrice")
-  title_string <- paste(stocknames[i],
-                        "Actual price Vs risk discount estimated prices")
-  g1<- ggplot(plotdat2,aes(x=Date,y=PlotPrice,colour=variable))+geom_line()+
-    ggtitle(title_string)
-  # print(g1) #not separate enough for visualizing differences
-  pricesdat <- 100*(plot.df[,-c(1,6)]-plot.df$Price)/plot.df$Price
-  pricesdat$Date <- index(plot.xts)
-  plotdat2 <- melt(pricesdat,id="Date",value.name="PlotPrice")
-  title_string <- paste(stocknames[i],
-                        "Risk discount estimated prices vs real price")
-  g2 <- ggplot(plotdat2,aes(x=Date,y=PlotPrice,colour=variable))+geom_line()+
-    labs(y="Price error pct")+
-    ggtitle(title_string)
-  #print(g2)
-  grid.arrange(g1,g2,nrow=2)
+  #plot.xts <- StocksList[[i]][calc_start:N,c("Price","CAPMPrice","VarPrice","SVarPrice","VAR5pctPrice")]
+  if ((i!=7)&&(i!=29)) {  #temporary workaround, check if 7,29 are the only miss
+    plot.xts <- StocksList[[i]][calc_start:N,c("Price","VarPrice","SVarPrice","VAR5pctPrice")]
+    plot.df <- data.frame(coredata(plot.xts))
+    plot.df$Date <- index(plot.xts)
+    plotdat2 <- melt(plot.df,id="Date",value.name="PlotPrice")
+    title_string <- paste(stocknames[i],
+                          "Actual price Vs risk discount estimated prices")
+    g1<- ggplot(plotdat2,aes(x=Date,y=PlotPrice,colour=variable))+geom_line()+
+      ggtitle(title_string)
+    # print(g1) #not separate enough for visualizing differences
+    pricesdat <- 100*(plot.df[,-c(1,5)]-plot.df$Price)/plot.df$Price
+    pricesdat$Date <- index(plot.xts)
+    plotdat2 <- melt(pricesdat,id="Date",value.name="PlotPrice")
+    title_string <- paste(stocknames[i],
+                          "Risk discount estimated prices vs real price")
+    g2 <- ggplot(plotdat2,aes(x=Date,y=PlotPrice,colour=variable))+geom_line()+
+      labs(y="Price error pct")+
+      ggtitle(title_string)
+    #print(g2)
+    grid.arrange(g1,g2,nrow=2)
+  }
 }

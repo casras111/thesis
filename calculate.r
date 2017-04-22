@@ -11,7 +11,8 @@ run_bootstrap=FALSE
 load("../DataWork/Stocks.Rdata")
 load("../DataWork/LIBOR.Rdata")
 load("../DataWork/SP500.Rdata")
-#load("../DataWork/cap_pct.Rdata")
+
+Stocks <- Stocks[,601:778] #first 200 stocks for 1 day run time
 
 N <- dim(LIBOR)[1] #number of periods assumed consistent for all data structures
 #constant defining how many months of history to use, 120 for 10y monthly
@@ -198,13 +199,13 @@ vartime <- system.time(
       StocksList[[i]]$BootVARCI5   <-NA
       StocksList[[i]]$BootVARCI95  <-NA
     }
-    if ((i!=7)&&(i!=29)) {  #temporary workaround, check if 7,29 are the only miss
+    #if ((i!=7)&&(i!=29)) {  #temporary workaround, check if 7,29 are the only miss
       pb <- txtProgressBar(min=calc_start,max=N,style=3)
       #1.5h current run time without bootstrap, on i5 PC 0.6h with boot 100
       DistMatTotal <- merge(SP500$Return,StocksList[[i]]$Return) #distribution matrix
       names(DistMatTotal) <- c("IndexRet","StockRet")
-      #for (j in calc_start:N) {
-      for (j in N:N) {  #for testing only last period
+      for (j in calc_start:N) {
+      #for (j in N:N) {  #for testing only last period
         setTxtProgressBar(pb,j)
         rf <- as.numeric(LIBOR$Rate[j])
         cpr <- as.numeric(StocksList[[i]][j,"Price"])    #current price abbreviation
@@ -246,7 +247,7 @@ vartime <- system.time(
         }
       }
       close(pb)
-    }
+    #}
   }
   ,gcFirst=T)
 
@@ -255,51 +256,3 @@ vartime <- system.time(
 save(StocksList,file="../DataWork/StocksList.Rdata")
 
 # TBD add regression between history average return and predicted return for different stocks and check R2
-
-for (i in seq_along(stocknames)) {
-  #sum of squares of the error for variance risk predict
-  RMSE1 <- with(StocksList[[i]][calc_start:N],sqrt(mean(((Price-CAPMPrice)/Price)^2)))
-  RMSE2 <- with(StocksList[[i]][calc_start:N],sqrt(mean(((Price-VarPrice)/Price)^2)))
-  RMSE3 <- with(StocksList[[i]][calc_start:N],sqrt(mean(((Price-SVarPrice)/Price)^2)))
-  RMSE4 <- with(StocksList[[i]][calc_start:N],sqrt(mean(((Price-VAR5pctPrice)/Price)^2)))
-  cat(sprintf("%-4s RMSE: CAPM %.4f, Variance %.4f, Semivariance %.4f, VAR5pct %.4f \n",
-              stocknames[i],RMSE1,RMSE2,RMSE3,RMSE4))
-}
-
-#Strategy of buy if VAR/SVAR price below market price,sell otherwise, discounted
-#not good check, always same profit if always buys
-# ibm <- ibm %>%
-#   mutate (ProfitVAR =
-#             ifelse(lead(VarPrice)>lead(Adj.Close),
-#                    (Adj.Close-lead(Adj.Close)*(1+rf)),
-#                    (lead(Adj.Close)*(1+rf)-Adj.Close)),
-#           ProfitSVAR =
-#             ifelse(lead(SVarPrice)>lead(Adj.Close),
-#                    (Adj.Close-lead(Adj.Close)*(1+rf)),
-#                    (lead(Adj.Close)*(1+rf)-Adj.Close)))
-#total VAR + SVAR profit
-# sum(ibm$ProfitVAR,na.rm=TRUE)
-# sum(ibm$ProfitSVAR,na.rm=TRUE)
-#ibm %>% filter(!is.na(ProfitVAR)) %>% summarize(prVAR=sum(ProfitVAR))
-
-# for (i in seq_along(stocknames)) {
-#   plot.xts <- StocksList[[i]][calc_start:N,c("Price","CAPMPrice","VarPrice","SVarPrice","VAR5pctPrice")]
-#   plot.df <- data.frame(coredata(plot.xts))
-#   plot.df$Date <- index(plot.xts)
-#   plotdat2 <- melt(plot.df,id="Date",value.name="PlotPrice")
-#   title_string <- paste(stocknames[i],
-#                         "Actual price Vs risk discount estimated prices")
-#   g1<- ggplot(plotdat2,aes(x=Date,y=PlotPrice,colour=variable))+geom_line()+
-#     ggtitle(title_string)
-#   # print(g1) #not separate enough for visualizing differences
-#   pricesdat <- 100*(plot.df[,-c(1,6)]-plot.df$Price)/plot.df$Price
-#   pricesdat$Date <- index(plot.xts)
-#   plotdat2 <- melt(pricesdat,id="Date",value.name="PlotPrice")
-#   title_string <- paste(stocknames[i],
-#                         "Risk discount estimated prices vs real price")
-#   g2 <- ggplot(plotdat2,aes(x=Date,y=PlotPrice,colour=variable))+geom_line()+
-#     labs(y="Price error pct")+
-#     ggtitle(title_string)
-#   #print(g2)
-#   grid.arrange(g1,g2,nrow=2)
-# }

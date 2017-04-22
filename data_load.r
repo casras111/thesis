@@ -11,8 +11,9 @@ options("getSymbols.warning4.0"=FALSE)
 #mysymbols <- c("IBM","AAPL","IHT","USEG","LNN")
 #read companies names from screening file with US stocks from before 1960
 #daily vol greater than 0.1mm
-allstocks <- read.table("../DataRaw/companies.csv",sep=",",stringsAsFactors = F)
-mysymbols <- sample(allstocks[,2],50)
+allstocks <- read.csv("../DataRaw/screen_companies_no_otc.csv",sep=",",stringsAsFactors = F)
+#mysymbols <- sample(allstocks[,2],10)
+mysymbols <- allstocks[,2]
 getSymbols(mysymbols,src="yahoo", auto.assign = T,from=startDate,to=endDate)
 s1 <- Ad(get(mysymbols[1])) #keep only Adjusted.Close, get for string to var
 Stocks <- s1
@@ -21,19 +22,20 @@ for (i in 2:length(mysymbols)) {
 }
 colnames(Stocks) <- mysymbols
 
+#remove non-trade day after Sep 11 attack, lots of NAs
+Stocks <- Stocks[index(Stocks)!="2001-09-12"]
+
+#remove stocks with missing trading info
+missing_vec <- sapply(Stocks,anyNA)
+Stocks <- Stocks[,!missing_vec]
+mysymbols <- mysymbols[!missing_vec]
+
 ##### read LIBOR daily rates  ######
 getSymbols("USD1MTD156N",src="FRED",auto.assign = T,from=startDate,to=endDate)
 LIBOR <- na.locf(USD1MTD156N) #replace NAs with prior data
 #LIBOR <- USD1MTD156N[!is.na(USD1MTD156N)] #remove NAs
 colnames(LIBOR) <- "LIBOR"
 LIBOR <- LIBOR[period_filter] #get symbols end date not working?
-
-##### read MSCI index monthly prices  ######
-# mpath <- file.path("../DataRaw","MSCI_ACWI.xls")
-# MSCI <- read.xlsx(file=mpath,sheetIndex=1,startRow = 7,endRow = 346)
-# MSCI <- xts(MSCI[,2],MSCI$Date)
-# colnames(MSCI) <- "MSCI"
-# MSCI <- MSCI[period_filter]
 
 ##### read SP500TR index prices  ######
 getSymbols("^SP500TR",src="yahoo", auto.assign = T,from=startDate,to=endDate)
@@ -42,9 +44,10 @@ colnames(SP500) <- "SP500"
 
 #keep only matching dates
 MergedDat <- merge(merge(SP500,LIBOR,join='inner'),Stocks,join='inner')
-for (i in 1:length(mysymbols)) {
-  Stocks[,i] <- MergedDat[,mysymbols[i]]
-}
+Stocks <- MergedDat[,-c(1,2)]
+# for (i in 1:length(mysymbols)) {
+#   Stocks[,i] <- MergedDat[,mysymbols[i]]
+# }
 SP500 <- MergedDat$SP500
 LIBOR <- MergedDat$LIBOR
 
@@ -62,14 +65,7 @@ if (!hist_daily) {                               #keep only end of month
 
 which(is.na(merge(SP500,LIBOR,Stocks)$SP500)) #should be length 0
 
-#indexcap <- 19000 #$19000 milliard SP500
-#cap <- c(152.5,580.5,0.02197,0.00887,0.77376) #2014 EOY market caps
-#cap_pct <- cap/indexcap
-#names(cap_pct) <- mysymbols
-
 #Save Rdata variables for calculate module
 save(Stocks,file="../DataWork/Stocks.Rdata")
 save(LIBOR,file="../DataWork/LIBOR.Rdata")
-#save(MSCI,file="../DataWork/MSCI.Rdata")
 save(SP500,file="../DataWork/SP500.Rdata")
-#save(cap_pct,file="../DataWork/cap_pct.Rdata")

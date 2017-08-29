@@ -46,7 +46,8 @@ plotdat <- as.data.frame(apply(dat[,-rm_cols],2,norm_col))
 plotdat$Date <- index(dat)
 plotdat <- melt(plotdat,id="Date",value.name = "Returns")
 #using log scale to deal with cases like AAPL - 1000% in 20 years
-g1 <- ggplot(plotdat,aes(x=Date,y=Returns,colour=variable))+geom_line()+
+g1 <- ggplot(plotdat,aes(x=Date,y=Returns,colour=variable))+
+  geom_line(show.legend=FALSE)+
   scale_y_log10()+ggtitle("SP500 and Stocks log scaled 20 years returns")
 print(g1)
 
@@ -163,11 +164,11 @@ RTR <- function(StockWeight,PriceGuess,RiskFunc,Rf,DistMat){
 #for given stock price and risk function using RTR function
 RTRpctmax <- function(PriceGuess,RiskFunc,Rf,DistMat) {
   #because of bimodal function received empirically splitting the search
-  #space to 2 halves allow finding global max instead of local
-  pctmax1 <- optimize(RTR,c(0,0.5),PriceGuess=PriceGuess,     #optimize stock% between 0-1
+  #space to 2 halves to allow finding global max instead of local
+  pctmax1 <- optimize(RTR,c(0,0.5),PriceGuess=PriceGuess,     #optimize stock% between 0-0.5
                      RiskFunc=RiskFunc,Rf=Rf,DistMat=DistMat,
                      maximum=TRUE,tol=1e-9)                   #find max
-  pctmax2 <- optimize(RTR,c(0.5,1),PriceGuess=PriceGuess,     #optimize stock% between 0-1
+  pctmax2 <- optimize(RTR,c(0.5,1),PriceGuess=PriceGuess,     #optimize stock% between 0.5-1
                       RiskFunc=RiskFunc,Rf=Rf,DistMat=DistMat,
                       maximum=TRUE,tol=1e-9)                  #find max
   pctmax <- ifelse(pctmax1$objective>pctmax2$objective,
@@ -212,6 +213,8 @@ vartime <- system.time(
         DistMat <- DistMatTotal[(j-n_window+1):j]
         DistMat$StockPrices <- cpr*(1+DistMat$StockRet)  #distribution of expected prices
         DistMat <- DistMat[,c("IndexRet","StockPrices")]
+        #search prices interval of current price * [0.5,2] to find root of
+        #function f defined for zero of RTRpctmax, % weight of maximum RTR of portfolio 
         StocksList[[i]][j,"VarPrice"]     <- uniroot(f,c(cpr/2,cpr*2),RiskFunc="sd",
                                                      Rf=rf,DistMat=DistMat)$root
         StocksList[[i]][j,"SVarPrice"]    <- uniroot(f,c(cpr/2,cpr*2),RiskFunc="svar",

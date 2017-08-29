@@ -6,6 +6,11 @@ library(reshape2)
 library(gridExtra)
 library(moments)    #for skewness function
 
+startDate <- "1996-1-1"
+midDate   <- "2005-12-31"
+midDate_1 <- "2006-1-1"
+endDate   <- "2015-12-31"
+
 #load(file="C:/Users/Claudiu/Dropbox/Thesis/Docs/Data/StocksList26092016Daily_5stocks.Rdata")
 #load(file="C:/Users/Claudiu/Dropbox/Thesis/Docs/Data/StocksList21092016Bootstrap10000_5stocks.Rdata")
 
@@ -31,8 +36,10 @@ bootcols <- grep("Boot",colnames(StocksList[[1]]))
 #vector with names of stocks that have completed runs
 completeStocks <- stocknames[!sapply(lapply(StocksList,last),anyNA)]
 completeIndx <- (1:length(StocksList))[!sapply(lapply(StocksList,last),anyNA)] #incomplete runs
+StocksList <- StocksList[completeIndx]
+StocksList <- StocksList[-417] #temp fix for TDS stock with stock split on 16/5/2005
 
-for (i in completeIndx) {
+for (i in 1:length(StocksList)) {
   #sum of squares of the error for variance risk predict
   RMSE1 <- with(StocksList[[i]][calc_start:N],sqrt(mean(((Price-CAPMPrice)/Price)^2)))
   RMSE2 <- with(StocksList[[i]][calc_start:N],sqrt(mean(((Price-VarPrice)/Price)^2)))
@@ -50,37 +57,83 @@ for (i in completeIndx) {
                                     width=n_window,na.rm=T)
 }
 
+
+
+#descriptive statistics for 2 periods, average for all stocks for all months
+mean_func <- function(x,a,b) {return(mean(coredata(x[paste0(a,"/",b)]$Return),na.rm=T))}
+sd_func   <- function(x,a,b) {return(sd(coredata(x[paste0(a,"/",b)]$Return),na.rm=T))}
+skew_func <- function(x,a,b) {return(skewness(coredata(x[paste0(a,"/",b)]$Return),na.rm=T))}
+StocksStat1 <- rbind(mean(sapply(StocksList, mean_func,startDate,midDate)),
+                    mean(sapply(StocksList, sd_func,   startDate,midDate)),
+                    mean(sapply(StocksList, skew_func, startDate,midDate)))
+StocksStat2 <- rbind(mean(sapply(StocksList, mean_func,midDate_1,endDate)),
+                     mean(sapply(StocksList, sd_func,  midDate_1,endDate)),
+                     mean(sapply(StocksList, skew_func,midDate_1,endDate)))
+StocksStat <- cbind(StocksStat1,StocksStat2)
+row.names(StocksStat) <- c("Mean","Std Dev","Skewness")
+colnames(StocksStat)  <- c("1995-2005","2006-2015")
+print(StocksStat)
+
+#descriptive statistics - histogram for monthly cross-section of stocks returns
+statret <- sapply(StocksList,function(x) {return(coredata(x$Return))})
+stat_df1 <- data.frame(Dates=index(StocksList[[1]]),
+                      Mean=apply(statret,1,mean))
+stat_df1 <- stat_df1[-1,]  #remove first NA row
+ggplot(stat_df1,aes(Mean))+geom_histogram(binwidth=0.03)
+#histograms for std dev and skewness
+stat_df2 <- data.frame(StdDev=apply(statret,2,sd,na.rm=T),
+                       Skewness=apply(statret,2,skewness,na.rm=T))
+ggplot(stat_df2,aes(StdDev))+geom_histogram(binwidth=0.02)
+ggplot(stat_df2,aes(Skewness))+geom_histogram(binwidth=0.3)
+
+
 #extract vector of RMSE %
-RMSE_Var      <- sapply(lapply(StocksList,last)[completeIndx],function(x) {return(x$RMSE_Var)})
-RMSE_SVar     <- sapply(lapply(StocksList,last)[completeIndx],function(x) {return(x$RMSE_SVar)})
-RMSE_VAR5Pct  <- sapply(lapply(StocksList,last)[completeIndx],function(x) {return(x$RMSE_VAR5Pct)})
+RMSE_Var      <- sapply(lapply(StocksList,last),function(x) {return(x$RMSE_Var)})
+RMSE_SVar     <- sapply(lapply(StocksList,last),function(x) {return(x$RMSE_SVar)})
+RMSE_VAR5Pct  <- sapply(lapply(StocksList,last),function(x) {return(x$RMSE_VAR5Pct)})
 #descriptive statistics in %
 RMSE_summary <- 100*rbind(summary(RMSE_Var),summary(RMSE_SVar),summary(RMSE_VAR5Pct))
 row.names(RMSE_summary)<-c("Variance","Semivariance","VAR")
 RMSE_summary
 
-plot.df <- data.frame(stock=names(RMSE_Var),RMSE_Var,RMSE_SVar,RMSE_VAR5Pct)
+plot.df <- data.frame(stock=names(RMSE_Var),Variance=RMSE_Var,
+                      Semivariance=RMSE_SVar,VaR=RMSE_VAR5Pct)
 plot.df <- melt(plot.df,id="stock",value.name="RMSE",
                 variable.name="Risk_Measure")
 ggplot(plot.df,aes(Risk_Measure,RMSE))+geom_boxplot()
 
 #boxplot(RMSE_Var,RMSE_SVar,RMSE_VAR5Pct,names=c("Variance","Semivariance","VAR"))
 
-skew_last     <- sapply(lapply(StocksList,last)[completeIndx],function(x) {return(x$Skew)})
-skew_first    <- sapply(lapply(StocksList,function(x) {return(first(last(x,120)))})[completeIndx],
+skew_last     <- sapply(lapply(StocksList,last),function(x) {return(x$Skew)})
+skew_first    <- sapply(lapply(StocksList,function(x) {return(first(last(x,120)))}),
                         function(x) {return(x$Skew)})
 skew_avg      <- 0.5*(skew_last+skew_first)
-skew_rollavg  <- sapply(lapply(StocksList,last)[completeIndx],function(x) {return(x$skewavg)})
+skew_rollavg  <- sapply(lapply(StocksList,last),function(x) {return(x$skewavg)})
 
-skew_log_last     <- sapply(lapply(StocksList,last)[completeIndx],function(x) {return(x$LogSkew)})
-skew_log_first    <- sapply(lapply(StocksList,function(x) {return(first(last(x,120)))})[completeIndx],
+skew_log_last     <- sapply(lapply(StocksList,last),function(x) {return(x$LogSkew)})
+skew_log_first    <- sapply(lapply(StocksList,function(x) {return(first(last(x,120)))}),
                         function(x) {return(x$LogSkew)})
 skew_log_avg      <- 0.5*(skew_log_last+skew_log_first)
 
 skew_df <- as.data.frame(cbind(skew_last,skew_first,skew_avg,skew_rollavg,skew_log_avg,
                                RMSE_Var,RMSE_SVar))
 skew_df$Var_best <- (skew_df$RMSE_Var < skew_df$RMSE_SVar)
-skew_df$Predictor_Group <- ifelse((skew_df$RMSE_Var < skew_df$RMSE_SVar),"G1","G2")
+#Labeling G1 group with lower variance RMSE and G2 for semivariance
+skew_df$Predictor_Group <- ifelse((skew_df$RMSE_Var < skew_df$RMSE_SVar),
+                                  "G1","G2")
+ggplot(skew_df,aes(Predictor_Group,skew_avg))+geom_boxplot()
+ggplot(skew_df,aes(skew_avg))+geom_density(aes(colour=Predictor_Group))
+
+#  ggtitle("Stock returns skewness in optimal RMSE groups")
+summary(skew_df$skew_avg)
+summary(skew_df[skew_df$Predictor_Group=="G1",]$skew_avg)
+summary(skew_df[skew_df$Predictor_Group=="G2",]$skew_avg)
+table(skew_df$Predictor_Group)
+skew_df$positive_skew <- ifelse(skew_df$skew_avg > 0.2,"Large","Small")
+with(skew_df,table(Predictor_Group,positive_skew))
+
+skew_df$beta <- sapply(lapply(StocksList,last),function(x) {return(x$Beta)})
+table(skew_df$Var_best,skew_df$beta>1.5) 
 
 reg1 <- lm((skew_df$RMSE_Var>skew_df$RMSE_SVar) ~ skew_df$skew_first)
 summary(reg1)
@@ -88,15 +141,14 @@ reg2 <- lm((skew_df$RMSE_Var>skew_df$RMSE_SVar) ~ skew_df$skew_last)
 summary(reg2)
 reg3 <- lm((skew_df$RMSE_Var>skew_df$RMSE_SVar) ~ skew_df$skew_rollavg)
 summary(reg3)
+#regression with average of first and last entry in 10y skew as a predictor
 reg4 <- lm((skew_df$RMSE_Var>skew_df$RMSE_SVar) ~ skew_df$skew_avg)
 summary(reg4)
 reg5 <- lm((skew_df$RMSE_Var>skew_df$RMSE_SVar) ~ skew_df$skew_log_avg)
 summary(reg5)
 
-logreg <- glm(skew_df$Var_best ~ skew_df$skew_avg,family=binomial(link="logit"))
+logreg <- glm(!skew_df$Var_best ~ skew_df$skew_avg,family=binomial(link="logit"))
 summary(logreg)
-ggplot(skew_df,aes(Predictor_Group,skew_avg))+geom_boxplot()+
-  ggtitle("Stock returns skewness in optimal RMSE groups")
 
 ggplot(skew_df,aes(Var_best,skew_avg))+geom_boxplot()+
   ggtitle("RMSE Variance < RMSE Semivariance as a function of skewness")
@@ -111,7 +163,7 @@ if (!is.null(dim(bootcols))) {
   }
 }
 
-# for (i in completeIndx) {
+# for (i in length(StocksList)) {
 #   #plot.xts <- StocksList[[i]][calc_start:N,c("Price","CAPMPrice","VarPrice","SVarPrice","VAR5pctPrice")]
 #   plot.xts <- StocksList[[i]][calc_start:N,c("Price","VarPrice","SVarPrice","VAR5pctPrice")]
 #   plot.df <- data.frame(coredata(plot.xts))

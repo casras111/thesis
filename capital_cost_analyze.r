@@ -29,10 +29,15 @@ N <- dim(LIBOR)[1] #number of periods assumed consistent for all data structures
 #constant defining how many months of history to use, 120 for 10y monthly
 n_window <- round(N/2)
 colnames(SP500) <- "Price"
+
+LIBOR <- LIBOR/12/100                       #monthly percent
+
 SP500$Return <- ROC(SP500$Price,type="discrete",na.pad=F) #Rate of change, return %
 SP500$AvgRet <- rollapply(SP500$Return,FUN=mean,width=n_window)
 
 for (i in 1:length(StocksList)) {
+  StocksList[[i]]$beta_CAPM <- with(StocksList[[i]],
+                                    (PredictNextPrice/CAPMPrice -1-LIBOR)/(SP500$AvgRet-LIBOR))
   StocksList[[i]]$beta_Var  <- with(StocksList[[i]],
                                     (PredictNextPrice/VarPrice -1-LIBOR)/(SP500$AvgRet-LIBOR))
   StocksList[[i]]$beta_SVar <- with(StocksList[[i]],
@@ -57,11 +62,29 @@ for (i in 1:length(StocksList)) {
 # print(StocksStat)
 # 
 # #descriptive statistics - histogram for monthly cross-section of stocks returns
-# statret <- sapply(StocksList,function(x) {return(coredata(x$Return))})
-# stat_df1 <- data.frame(Dates=index(StocksList[[1]]),
-#                       Mean=apply(statret,1,mean))
-# stat_df1 <- stat_df1[-1,]  #remove first NA row
-# ggplot(stat_df1,aes(Mean))+geom_histogram(binwidth=0.03)
+beta_Var  <- sapply(StocksList,function(x) {return(coredata(x$beta_Var))})
+beta_SVar <- sapply(StocksList,function(x) {return(coredata(x$beta_SVar))})
+ 
+plot(beta_Var[240,]-beta_SVar[240,])
+summary(beta_Var[240,]-beta_SVar[240,])
+boxplot(beta_Var[240,]-beta_SVar[240,])
+
+ 
+# stat_var <- data.frame(Dates=index(StocksList[[1]]),
+#                        Mean=apply(beta_Var,1,mean))
+# stat_var <- stat_var[-(1:120),]  #remove first 120 NA rows
+# ggplot(stat_var,aes(Mean))+geom_histogram(binwidth=0.03)
+#  
+# stat_svar <- data.frame(Dates=index(StocksList[[1]]),
+#                         Mean=apply(beta_SVar,1,mean))
+# stat_svar <- stat_svar[-(1:120),]  #remove first 120 NA rows
+# ggplot(stat_svar,aes(Mean))+geom_histogram(binwidth=0.03)
+#  
+# summary(stat_var$Mean)
+# summary(stat_svar$Mean)
+#  
+# boxplot(stat_var$Mean,stat_svar$Mean)
+
 # #histograms for std dev and skewness
 # stat_df2 <- data.frame(StdDev=apply(statret,2,sd,na.rm=T),
 #                        Skewness=apply(statret,2,skewness,na.rm=T))

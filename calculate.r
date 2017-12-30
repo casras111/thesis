@@ -12,7 +12,7 @@ load("../DataWork/Stocks.Rdata")
 load("../DataWork/LIBOR.Rdata")
 load("../DataWork/SP500.Rdata")
 
-Stocks <- Stocks[,601:778] #first 200 stocks for 1 day run time
+Stocks <- Stocks[,1:2] #first 200 stocks for 1 day run time
 
 N <- dim(LIBOR)[1] #number of periods assumed consistent for all data structures
 #constant defining how many months of history to use, 120 for 10y monthly
@@ -145,18 +145,34 @@ VAR20pct <- function(x,r=0.2) {
 #implement population sd for testing - without n-1
 pop.sd <- function (x) {return(sqrt(sum((x-mean(x))^2)/length(x)))}
 
+#Constants for prospect theory utility function
+CPT_ALPHA <- CPT_BETA <- 0.88
+CPT_GAMMA <- 2.25
+
+#utility function for prospect theory
+cpt_util <- function(ret) {
+  gtr_than_zero <- (ret > 0)
+  ret[gtr_than_zero] <- ret[gtr_than_zero]^CPT_ALPHA
+  ret[!gtr_than_zero] <- -CPT_GAMMA * (-ret[!gtr_than_zero])^CPT_BETA
+  return(ret)
+}
+
 #calculate reward to risk ratio of stock+index portfolio for different risk functions
 #from assumed probability distribution of returns DistMat and assumed price PriceGuess
 RTR <- function(StockWeight,PriceGuess,RiskFunc,Rf,DistMat){
   Ret_i <- DistMat$StockPrices/PriceGuess-1  #derived returns
   #Portfolio returns vector
   RetVec <- StockWeight*Ret_i+(1-StockWeight)*DistMat$IndexRet
-  RetPortfolio <- mean(RetVec)-Rf                     #return mean - risk free
-  RiskPortfolio <- do.call(RiskFunc,list(x=RetVec))   #risk measure
-  RiskPortfolio <- RiskPortfolio^(sign(RetPortfolio)) #Israelsen correction for negative rets
-  RTRPortfolio <- ifelse(RiskPortfolio==0,
-                         .Machine$integer.max,        #for zero svar positive only returns
-                         RetPortfolio/RiskPortfolio)  #Reward to Risk
+  if (RiskFunc=="CPT") {
+    RTRPortfolio <- mean(cpt_util(RetVec))              #for prospect theory return utility
+  } else {
+    RetPortfolio <- mean(RetVec)-Rf                     #return mean - risk free
+    RiskPortfolio <- do.call(RiskFunc,list(x=RetVec))   #risk measure
+    RiskPortfolio <- RiskPortfolio^(sign(RetPortfolio)) #Israelsen correction for negative rets
+    RTRPortfolio <- ifelse(RiskPortfolio==0,
+                           .Machine$integer.max,        #for zero svar positive only returns
+                           RetPortfolio/RiskPortfolio)  #Reward to Risk
+  }
   return(RTRPortfolio)
 }
 
@@ -189,6 +205,7 @@ vartime <- system.time(
     StocksList[[i]]$VarPrice     <-NA
     StocksList[[i]]$SVarPrice    <-NA
     StocksList[[i]]$VAR5pctPrice <-NA
+    StocksList[[i]]$CPTPrice     <-NA
     if (run_bootstrap==TRUE) {
       StocksList[[i]]$BootVar      <-NA
       StocksList[[i]]$BootVarCI5   <-NA
@@ -199,6 +216,7 @@ vartime <- system.time(
       StocksList[[i]]$BootVAR      <-NA
       StocksList[[i]]$BootVARCI5   <-NA
       StocksList[[i]]$BootVARCI95  <-NA
+      #TBD for CPT
     }
     #if ((i!=7)&&(i!=29)) {  #temporary workaround, check if 7,29 are the only miss
       pb <- txtProgressBar(min=calc_start,max=N,style=3)
@@ -221,6 +239,8 @@ vartime <- system.time(
                                                      Rf=rf,DistMat=DistMat)$root
         StocksList[[i]][j,"VAR5pctPrice"] <- uniroot(f,c(cpr/2,cpr*2),RiskFunc="VAR5pct",
                                                      Rf=rf,DistMat=DistMat)$root
+        StocksList[[i]][j,"CPTPrice"] <- uniroot(f,c(cpr/2,cpr*2),RiskFunc="CPT",
+                                                     Rf=rf,DistMat=DistMat)$root
         if ((j==N) && (run_bootstrap==TRUE)) {
           bootN <- 10000 #run time 7.7hours on i5 PC for 10000
           VarPrice_vec  <- rep(0,bootN)
@@ -234,6 +254,7 @@ vartime <- system.time(
                                         Rf=rf,DistMat=DistMatSample)$root
             VARPrice_vec[q] <- uniroot(f,c(cpr/2,cpr*2),RiskFunc="VAR5pct",
                                        Rf=rf,DistMat=DistMatSample)$root
+            #TBD for CPT
           }
           hist(VarPrice_vec)
           StocksList[[i]][j,"BootVar"] <- mean(VarPrice_vec)
@@ -247,6 +268,7 @@ vartime <- system.time(
           StocksList[[i]][j,"BootVAR"] <- mean(VARPrice_vec)
           StocksList[[i]][j,"BootVARCI5"] <- quantile(VARPrice_vec,0.05)
           StocksList[[i]][j,"BootVARCI95"] <- quantile(VARPrice_vec,0.95)
+          #TBD for CPT
         }
       }
       close(pb)

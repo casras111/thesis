@@ -12,7 +12,7 @@ load("../DataWork/Stocks.Rdata")
 load("../DataWork/LIBOR.Rdata")
 load("../DataWork/SP500.Rdata")
 
-Stocks <- Stocks[,1:2] #first 200 stocks for 1 day run time
+Stocks <- Stocks[,1:2] #first 100 stocks for 1 day run time
 
 N <- dim(LIBOR)[1] #number of periods assumed consistent for all data structures
 #constant defining how many months of history to use, 120 for 10y monthly
@@ -142,6 +142,16 @@ VAR20pct <- function(x,r=0.2) {
   return(r5)
 }
 
+#AVAR average of VAR, default 5%
+AVAR <- function(x, r=0.05) {
+  r5 <- quantile(x,r,names=F)
+  avar_ret <- mean(x[x < r5])
+  if (avar_ret < 0) {
+    avar_ret <- (-1)*avar_ret
+    } else avar_ret <- 0
+  return(avar_ret)
+}
+
 #implement population sd for testing - without n-1
 pop.sd <- function (x) {return(sqrt(sum((x-mean(x))^2)/length(x)))}
 
@@ -206,6 +216,7 @@ vartime <- system.time(
     StocksList[[i]]$SVarPrice    <-NA
     StocksList[[i]]$VAR5pctPrice <-NA
     StocksList[[i]]$CPTPrice     <-NA
+    StocksList[[i]]$AVARPrice    <-NA
     if (run_bootstrap==TRUE) {
       StocksList[[i]]$BootVar      <-NA
       StocksList[[i]]$BootVarCI5   <-NA
@@ -216,7 +227,7 @@ vartime <- system.time(
       StocksList[[i]]$BootVAR      <-NA
       StocksList[[i]]$BootVARCI5   <-NA
       StocksList[[i]]$BootVARCI95  <-NA
-      #TBD for CPT
+      #TBD for CPT and AVAR
     }
     #if ((i!=7)&&(i!=29)) {  #temporary workaround, check if 7,29 are the only miss
       pb <- txtProgressBar(min=calc_start,max=N,style=3)
@@ -241,6 +252,8 @@ vartime <- system.time(
                                                      Rf=rf,DistMat=DistMat)$root
         StocksList[[i]][j,"CPTPrice"] <- uniroot(f,c(cpr/2,cpr*2),RiskFunc="CPT",
                                                      Rf=rf,DistMat=DistMat)$root
+        StocksList[[i]][j,"AVARPrice"] <- uniroot(f,c(cpr/2,cpr*2),RiskFunc="AVAR",
+                                                 Rf=rf,DistMat=DistMat)$root
         if ((j==N) && (run_bootstrap==TRUE)) {
           bootN <- 10000 #run time 7.7hours on i5 PC for 10000
           VarPrice_vec  <- rep(0,bootN)
@@ -254,7 +267,7 @@ vartime <- system.time(
                                         Rf=rf,DistMat=DistMatSample)$root
             VARPrice_vec[q] <- uniroot(f,c(cpr/2,cpr*2),RiskFunc="VAR5pct",
                                        Rf=rf,DistMat=DistMatSample)$root
-            #TBD for CPT
+            #TBD for CPT and AVAR
           }
           hist(VarPrice_vec)
           StocksList[[i]][j,"BootVar"] <- mean(VarPrice_vec)
@@ -268,7 +281,7 @@ vartime <- system.time(
           StocksList[[i]][j,"BootVAR"] <- mean(VARPrice_vec)
           StocksList[[i]][j,"BootVARCI5"] <- quantile(VARPrice_vec,0.05)
           StocksList[[i]][j,"BootVARCI95"] <- quantile(VARPrice_vec,0.95)
-          #TBD for CPT
+          #TBD for CPT and AVAR
         }
       }
       close(pb)

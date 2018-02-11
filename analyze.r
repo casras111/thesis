@@ -11,19 +11,29 @@ midDate   <- "2005-12-31"
 midDate_1 <- "2006-1-1"
 endDate   <- "2015-12-31"
 
+if (dir.exists("C:/Users/Claudiu/Dropbox")) {
+  droppath <- "C:/Users/Claudiu/Dropbox" #Dell laptop
+} else {
+  droppath <- "D:/Claudiu/Dropbox"       #Home PC
+}
+
+#historical use for bootstrap
 #load(file="C:/Users/Claudiu/Dropbox/Thesis/Docs/Data/StocksList26092016Daily_5stocks.Rdata")
 #load(file="C:/Users/Claudiu/Dropbox/Thesis/Docs/Data/StocksList21092016Bootstrap10000_5stocks.Rdata")
-
 #load(file="C:/Users/Claudiu/Dropbox/Thesis/Docs/Data/StocksList16122016Monthly48stocks.Rdata")
-load(file="C:/Users/Claudiu/Dropbox/Thesis/DataWork/StocksList_1_200.Rdata")
+
+load(file=file.path(droppath,"Thesis/DataWork/StocksList_1_100_CPT_AVAR.Rdata"))
 temp <- StocksList
-load(file="C:/Users/Claudiu/Dropbox/Thesis/DataWork/StocksList_201_400.Rdata")
+load(file=file.path(droppath,"Thesis/DataWork/StocksList_101_200_CPT_AVAR.Rdata"))
 StocksList <- c(temp,StocksList)
 temp <- StocksList
-load(file="C:/Users/Claudiu/Dropbox/Thesis/DataWork/StocksList_401_600.Rdata")
+load(file=file.path(droppath,"Thesis/DataWork/StocksList_201_400_CPT_AVAR.Rdata"))
 StocksList <- c(temp,StocksList)
 temp <- StocksList
-load(file="C:/Users/Claudiu/Dropbox/Thesis/DataWork/StocksList_601_778.Rdata")
+load(file=file.path(droppath,"Thesis/DataWork/StocksList_401_600_CPT_AVAR.Rdata"))
+StocksList <- c(temp,StocksList)
+temp <- StocksList
+load(file=file.path(droppath,"Thesis/DataWork/StocksList_601_778_CPT_AVAR.Rdata"))
 StocksList <- c(temp,StocksList)
 
 stocknames <- names(StocksList)
@@ -45,11 +55,20 @@ for (i in 1:length(StocksList)) {
   RMSE2 <- with(StocksList[[i]][calc_start:N],sqrt(mean(((Price-VarPrice)/Price)^2)))
   RMSE3 <- with(StocksList[[i]][calc_start:N],sqrt(mean(((Price-SVarPrice)/Price)^2)))
   RMSE4 <- with(StocksList[[i]][calc_start:N],sqrt(mean(((Price-VAR5pctPrice)/Price)^2)))
-  cat(sprintf("%-4s RMSE: CAPM %.4f, Variance %.4f, Semivariance %.4f, VAR5pct %.4f \n",
-              stocknames[i],RMSE1,RMSE2,RMSE3,RMSE4))
+  RMSE5 <- with(StocksList[[i]][calc_start:N],sqrt(mean(((Price-CPTPrice)/Price)^2)))
+  RMSE6 <- with(StocksList[[i]][calc_start:N],sqrt(mean(((Price-AVARPrice)/Price)^2)))
+  Err1 <- with(StocksList[[i]][calc_start:N],mean(((Price-VarPrice)/Price)))
+  Err2 <- with(StocksList[[i]][calc_start:N],mean(((Price-SVarPrice)/Price)))
+  cat(sprintf("%-4s RMSE: CAPM %.4f, Variance %.4f, Semivariance %.4f,
+              VAR5pct %.4f, CPT %.4f, AVAR %.4f \n",
+              stocknames[i],RMSE1,RMSE2,RMSE3,RMSE4,RMSE5,RMSE6))
   StocksList[[i]]$RMSE_Var <- RMSE2
   StocksList[[i]]$RMSE_SVar <- RMSE3
   StocksList[[i]]$RMSE_VAR5Pct <- RMSE4
+  StocksList[[i]]$RMSE_CPT <- RMSE5
+  StocksList[[i]]$RMSE_AVAR <- RMSE6
+  StocksList[[i]]$Err_Var <- Err1
+  StocksList[[i]]$Err_SVar <- Err2
   StocksList[[i]]$skewavg <- mean(StocksList[[i]]$Skew,na.rm=T)
   StocksList[[i]]$LogReturn <- ROC(StocksList[[i]]$Price,type="continuous",na.pad=F)
   #skewness (cumulative rolling) for n_window back history
@@ -91,13 +110,18 @@ ggplot(stat_df2,aes(Skewness))+geom_histogram(binwidth=0.3)
 RMSE_Var      <- sapply(lapply(StocksList,last),function(x) {return(x$RMSE_Var)})
 RMSE_SVar     <- sapply(lapply(StocksList,last),function(x) {return(x$RMSE_SVar)})
 RMSE_VAR5Pct  <- sapply(lapply(StocksList,last),function(x) {return(x$RMSE_VAR5Pct)})
+RMSE_CPT      <- sapply(lapply(StocksList,last),function(x) {return(x$RMSE_CPT)})
+RMSE_AVAR     <- sapply(lapply(StocksList,last),function(x) {return(x$RMSE_AVAR)})
+Err_Var     <- sapply(lapply(StocksList,last),function(x) {return(x$Err_Var)})
+Err_SVar     <- sapply(lapply(StocksList,last),function(x) {return(x$Err_SVar)})
 #descriptive statistics in %
-RMSE_summary <- 100*rbind(summary(RMSE_Var),summary(RMSE_SVar),summary(RMSE_VAR5Pct))
-row.names(RMSE_summary)<-c("Variance","Semivariance","VAR")
+RMSE_summary <- 100*rbind(summary(RMSE_Var),summary(RMSE_SVar),summary(RMSE_VAR5Pct),
+                          summary(RMSE_CPT),summary(RMSE_AVAR))
+row.names(RMSE_summary)<-c("Variance","Semivariance","VAR","CPT","AVAR")
 RMSE_summary
 
-plot.df <- data.frame(stock=names(RMSE_Var),Variance=RMSE_Var,
-                      Semivariance=RMSE_SVar,VaR=RMSE_VAR5Pct)
+plot.df <- data.frame(stock=names(RMSE_Var),Variance=RMSE_Var,Semivariance=RMSE_SVar,
+                      VaR=RMSE_VAR5Pct,CPT=RMSE_CPT,AVAR=RMSE_AVAR)
 plot.df <- melt(plot.df,id="stock",value.name="RMSE",
                 variable.name="Risk_Measure")
 ggplot(plot.df,aes(Risk_Measure,RMSE))+geom_boxplot()
@@ -116,7 +140,7 @@ skew_log_first    <- sapply(lapply(StocksList,function(x) {return(first(last(x,1
 skew_log_avg      <- 0.5*(skew_log_last+skew_log_first)
 
 skew_df <- as.data.frame(cbind(skew_last,skew_first,skew_avg,skew_rollavg,skew_log_avg,
-                               RMSE_Var,RMSE_SVar))
+                               RMSE_Var,RMSE_SVar,RMSE_CPT,RMSE_AVAR,Err_Var,Err_SVar))
 skew_df$Var_best <- (skew_df$RMSE_Var < skew_df$RMSE_SVar)
 #Labeling G1 group with lower variance RMSE and G2 for semivariance
 skew_df$Predictor_Group <- ifelse((skew_df$RMSE_Var < skew_df$RMSE_SVar),
@@ -163,25 +187,4 @@ if (!is.null(dim(bootcols))) {
   }
 }
 
-# for (i in length(StocksList)) {
-#   #plot.xts <- StocksList[[i]][calc_start:N,c("Price","CAPMPrice","VarPrice","SVarPrice","VAR5pctPrice")]
-#   plot.xts <- StocksList[[i]][calc_start:N,c("Price","VarPrice","SVarPrice","VAR5pctPrice")]
-#   plot.df <- data.frame(coredata(plot.xts))
-#   plot.df$Date <- index(plot.xts)
-#   plotdat2 <- melt(plot.df,id="Date",value.name="PlotPrice")
-#   title_string <- paste(stocknames[i],
-#                         "actual price Vs risk discount estimated prices")
-#   g1<- ggplot(plotdat2,aes(x=Date,y=PlotPrice,colour=variable))+geom_line()+
-#     ggtitle(title_string)
-#   # print(g1) #not separate enough for visualizing differences
-#   pricesdat <- 100*(plot.df[,-c(1,5)]-plot.df$Price)/plot.df$Price
-#   pricesdat$Date <- index(plot.xts)
-#   plotdat2 <- melt(pricesdat,id="Date",value.name="PlotPrice")
-#   title_string <- paste(stocknames[i],
-#                         "Risk discount estimated prices vs real price")
-#   g2 <- ggplot(plotdat2,aes(x=Date,y=PlotPrice,colour=variable))+geom_line()+
-#     labs(y="Price error pct")+
-#     ggtitle(title_string)
-#   #print(g2)
-#   grid.arrange(g1,g2,nrow=2)
-# }
+save(StocksList,file="../DataWork/StocksList_after_Analyze.Rdata")
